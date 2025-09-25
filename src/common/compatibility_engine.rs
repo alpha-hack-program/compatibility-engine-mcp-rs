@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::env;
+use once_cell::sync::Lazy;
 
 use super::metrics::{increment_requests, increment_errors, RequestTimer};
 
@@ -10,32 +12,85 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 
+// =================== CONFIGURATION ===================
+
+#[derive(Debug, Clone)]
+pub struct EngineConfig {
+    // Penalty calculation defaults
+    pub default_rate_per_day: f64,
+    pub default_cap: f64,
+    pub default_interest_rate: f64,
+    
+    // Tax calculation defaults
+    pub default_thresholds: Vec<f64>,
+    pub default_rates: Vec<f64>,
+    pub default_surcharge_threshold: f64,
+    pub default_surcharge_rate: f64,
+}
+
+impl EngineConfig {
+    pub fn from_env() -> Self {
+        Self {
+            default_rate_per_day: env::var("ENGINE_DEFAULT_RATE_PER_DAY")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(100.0),  // From LyFin-Compliance-Annex.md: "100 per day"
+                
+            default_cap: env::var("ENGINE_DEFAULT_CAP")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1000.0),  // From LyFin-Compliance-Annex.md: "Maximum Cap: 1000"
+                
+            default_interest_rate: env::var("ENGINE_DEFAULT_INTEREST_RATE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.05),  // From LyFin-Compliance-Annex.md: "5 percent annual"
+                
+            default_thresholds: env::var("ENGINE_DEFAULT_THRESHOLDS")
+                .ok()
+                .and_then(|s| Self::parse_vec_f64(&s))
+                .unwrap_or_else(|| vec![10000.0]),  // From 2025_61-FR.md: "First bracket: 10% on income up to 10000"
+                
+            default_rates: env::var("ENGINE_DEFAULT_RATES")
+                .ok()
+                .and_then(|s| Self::parse_vec_f64(&s))
+                .unwrap_or_else(|| vec![0.10, 0.20]),  // From 2025_61-FR.md: "10% up to 10000", "20% exceeding 10000"
+                
+            default_surcharge_threshold: env::var("ENGINE_DEFAULT_SURCHARGE_THRESHOLD")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5000.0),  // From 2025_61-FR.md: "Where the tax calculated... exceeds 5000"
+                
+            default_surcharge_rate: env::var("ENGINE_DEFAULT_SURCHARGE_RATE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.02),  // From 2025_61-FR.md: "a surcharge of 2% of the total tax liability"
+        }
+    }
+    
+    fn parse_vec_f64(s: &str) -> Option<Vec<f64>> {
+        let parsed: Result<Vec<f64>, _> = s
+            .split(',')
+            .map(|part| part.trim().parse::<f64>())
+            .collect();
+        parsed.ok()
+    }
+}
+
+static CONFIG: Lazy<EngineConfig> = Lazy::new(EngineConfig::from_env);
+
 // =================== DATA STRUCTURES ===================
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct CalcPenaltyParams {
     #[schemars(description = "Number of days late")]
     pub days_late: f64,
-    #[schemars(description = "Rate per day")]
-    pub rate_per_day: f64,
-    #[schemars(description = "Maximum cap on the penalty")]
-    pub cap: f64,
-    #[schemars(description = "Interest rate (as decimal, e.g., 0.05 for 5%)")]
-    pub interest_rate: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct CalcTaxParams {
     #[schemars(description = "Total income")]
     pub income: f64,
-    #[schemars(description = "Tax bracket thresholds (sorted ascending)")]
-    pub thresholds: Vec<f64>,
-    #[schemars(description = "Tax rates for each bracket (as decimals, e.g., 0.10 for 10%)")]
-    pub rates: Vec<f64>,
-    #[schemars(description = "Surcharge threshold")]
-    pub surcharge_threshold: f64,
-    #[schemars(description = "Surcharge rate (as decimal, e.g., 0.02 for 2%)")]
-    pub surcharge_rate: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
@@ -644,7 +699,7 @@ impl CompatibilityEngine {
 
     /// Calculate penalty with cap and interest
     /// Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate
-    #[tool(description = "Calculate penalty with cap and interest. Returns structured response with penalty amount, detailed explanation of calculation steps, errors for invalid inputs, and warnings. Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate. Example: 12 days late, $100/day, $1,000 cap, 5% interest → $1,050")]
+    #[tool(description = "Calculate penalty with cap and interest. Returns structured response with penalty amount, detailed explanation of calculation steps, errors for invalid inputs, and warnings. Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate. Rate, cap, and interest values are configured via environment variables. Example: 12 days late → uses configured defaults")]
     pub async fn calc_penalty(
         &self,
         Parameters(params): Parameters<CalcPenaltyParams>
@@ -654,9 +709,9 @@ impl CompatibilityEngine {
 
         let result = Self::calc_penalty_internal(
             params.days_late,
-            params.rate_per_day,
-            params.cap,
-            params.interest_rate,
+            CONFIG.default_rate_per_day,
+            CONFIG.default_cap,
+            CONFIG.default_interest_rate,
         );
 
         if !result.errors.is_empty() {
@@ -679,7 +734,7 @@ impl CompatibilityEngine {
 
     /// Calculate progressive tax with surcharge
     /// Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate
-    #[tool(description = "Calculate progressive tax with surcharge. Returns structured response with tax amount, detailed explanation of bracket calculations and surcharge application, errors for invalid inputs, and warnings. Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate. Example: $40,000 income, thresholds = [10,000], rates = [0.10, 0.20], surcharge_threshold = 5,000, surcharge_rate = 0.02 → $7,140")]
+    #[tool(description = "Calculate progressive tax with surcharge. Returns structured response with tax amount, detailed explanation of bracket calculations and surcharge application, errors for invalid inputs, and warnings. Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate. Tax brackets, rates, and surcharge values are configured via environment variables. Example: $40,000 income → uses configured tax brackets")]
     pub async fn calc_tax(
         &self,
         Parameters(params): Parameters<CalcTaxParams>
@@ -689,26 +744,26 @@ impl CompatibilityEngine {
 
         let result = Self::calc_tax_internal(
             params.income,
-            params.thresholds,
-            params.rates,
-            params.surcharge_threshold,
-            params.surcharge_rate,
+            CONFIG.default_thresholds.clone(),
+            CONFIG.default_rates.clone(),
+            CONFIG.default_surcharge_threshold,
+            CONFIG.default_surcharge_rate,
         );
 
         if !result.errors.is_empty() {
             increment_errors();
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(CallToolResult::error(vec![Content::text(format!(
                 "Calculation errors: {}", result.errors.join(", ")
-            ))]));
-        }
-
-        match serde_json::to_string_pretty(&result) {
-            Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
-            Err(e) => {
-                increment_errors();
-                Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Error serializing response: {}", e
-                ))]))
+            ))]))
+        } else {
+            match serde_json::to_string_pretty(&result) {
+                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Err(e) => {
+                    increment_errors();
+                    Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Error serializing response: {}", e
+                    ))]))
+                }
             }
         }
     }
@@ -732,18 +787,18 @@ impl CompatibilityEngine {
 
         if !result.errors.is_empty() {
             increment_errors();
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(CallToolResult::error(vec![Content::text(format!(
                 "Validation errors: {}", result.errors.join(", ")
-            ))]));
-        }
-
-        match serde_json::to_string_pretty(&result) {
-            Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
-            Err(e) => {
-                increment_errors();
-                Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Error serializing response: {}", e
-                ))]))
+            ))]))
+        } else {
+            match serde_json::to_string_pretty(&result) {
+                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Err(e) => {
+                    increment_errors();
+                    Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Error serializing response: {}", e
+                    ))]))
+                }
             }
         }
     }
@@ -766,18 +821,18 @@ impl CompatibilityEngine {
 
         if !result.errors.is_empty() {
             increment_errors();
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(CallToolResult::error(vec![Content::text(format!(
                 "Validation errors: {}", result.errors.join(", ")
-            ))]));
-        }
-
-        match serde_json::to_string_pretty(&result) {
-            Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
-            Err(e) => {
-                increment_errors();
-                Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Error serializing response: {}", e
-                ))]))
+            ))]))
+        } else {
+            match serde_json::to_string_pretty(&result) {
+                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Err(e) => {
+                    increment_errors();
+                    Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Error serializing response: {}", e
+                    ))]))
+                }
             }
         }
     }
@@ -801,18 +856,18 @@ impl CompatibilityEngine {
 
         if !result.errors.is_empty() {
             increment_errors();
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(CallToolResult::error(vec![Content::text(format!(
                 "Validation errors: {}", result.errors.join(", ")
-            ))]));
-        }
-
-        match serde_json::to_string_pretty(&result) {
-            Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
-            Err(e) => {
-                increment_errors();
-                Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Error serializing response: {}", e
-                ))]))
+            ))]))
+        } else {
+            match serde_json::to_string_pretty(&result) {
+                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Err(e) => {
+                    increment_errors();
+                    Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Error serializing response: {}", e
+                    ))]))
+                }
             }
         }
     }
@@ -850,9 +905,6 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: 12.0,
-            rate_per_day: 100.0,
-            cap: 1000.0,
-            interest_rate: 0.05,
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -875,10 +927,6 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcTaxParams {
             income: 40000.0,
-            thresholds: vec![10000.0],
-            rates: vec![0.10, 0.20],
-            surcharge_threshold: 5000.0,
-            surcharge_rate: 0.02,
         };
         
         let result = engine.calc_tax(Parameters(params)).await;
@@ -890,7 +938,7 @@ mod tests {
         let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
         
         // Expected: 10,000 * 0.10 + 30,000 * 0.20 = 1,000 + 6,000 = 7,000
-        // Surcharge: 7,000 > 5,000, so 7,000 + (7,000 * 0.02) = 7,000 + 140 = 7,140
+        // Surcharge: 7,000 > 5,000 (surcharge_threshold), so 7,000 + (7,000 * 0.02) = 7,140
         assert_eq!(response.tax, 7140.0);
         assert!(response.errors.is_empty());
         assert!(response.explanation.contains("Bracket 1"));
@@ -1027,9 +1075,6 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: -5.0,  // Invalid: negative
-            rate_per_day: 100.0,
-            cap: 1000.0,
-            interest_rate: 0.05,
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1045,22 +1090,22 @@ mod tests {
 
     #[tokio::test]  
     async fn test_calc_tax_invalid_brackets() {
+        // This test is no longer relevant since we use fixed configuration
+        // but let's keep it to test that the default configuration is valid
         let engine = CompatibilityEngine::new();
         let params = CalcTaxParams {
             income: 40000.0,
-            thresholds: vec![10000.0],
-            rates: vec![0.10], // Wrong: should have 2 rates for 1 threshold
-            surcharge_threshold: 5000.0,
-            surcharge_rate: 0.02,
         };
         
         let result = engine.calc_tax(Parameters(params)).await;
         assert!(result.is_ok());
         let call_result = result.unwrap();
-        assert!(call_result.is_error.unwrap_or(false));
+        // Should succeed since we use valid default configuration
+        assert!(!call_result.is_error.unwrap_or(false));
         let content = call_result.content.unwrap();
-        let error_text = content[0].raw.as_text().unwrap().text.as_str();
-        assert!(error_text.contains("Invalid bracket configuration"));
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
+        assert!(response.errors.is_empty());
     }
 
     #[tokio::test]
@@ -1081,5 +1126,49 @@ mod tests {
         let content = call_result.content.unwrap();
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         assert!(error_text.contains("Invalid proposal type"));
+    }
+
+    #[tokio::test]
+    async fn test_calc_penalty_small_amount() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: 10.0,
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        let content = call_result.content.unwrap();
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: CalcPenaltyResponse = serde_json::from_str(json_text).unwrap();
+        
+        // Uses configured defaults: rate_per_day=100.0, cap=1000.0, interest_rate=0.05
+        // Expected: min(10 * 100, 1000) = 1000, then 1000 + (1000 * 0.05) = 1050
+        assert_eq!(response.penalty, 1050.0);
+        assert!(response.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_calc_tax_with_surcharge() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcTaxParams {
+            income: 50000.0,
+        };
+        
+        let result = engine.calc_tax(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        let content = call_result.content.unwrap();
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
+        
+        // Uses configured defaults: thresholds=[10000], rates=[0.10,0.20]
+        // surcharge_threshold=5000, surcharge_rate=0.02
+        // Expected: 10,000 * 0.10 + 40,000 * 0.20 = 1,000 + 8,000 = 9,000
+        // Surcharge: 9,000 > 5,000, so 9,000 + (9,000 * 0.02) = 9,000 + 180 = 9,180
+        assert_eq!(response.tax, 9180.0);
+        assert!(response.errors.is_empty());
     }
 }
