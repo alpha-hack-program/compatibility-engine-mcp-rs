@@ -1,0 +1,10 @@
+/target
+*.dxt
+*.log
+*.tmp
+*.bak
+*.swp
+*.old
+.DS_Store
+old/
+.vscode/

@@ -1,0 +1,289 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  test:
+    name: Test Compatibility Engine MCP Server
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          
+      - name: Install dependencies
+        run: |
+          echo "📦 Installing dependencies..."
+          sudo apt-get update
+          sudo apt-get install -y jq
+          cargo install cargo-release
+          echo "✅ Dependencies installed"
+
+      - name: Test version sync
+        run: |
+          echo "🔄 Testing version sync..."
+          make sync-version
+          echo "✅ Version sync successful"
+
+      - name: Run unit tests
+        run: |
+          echo "🔌 Testing unit tests..."
+          make test
+          echo "✅ Unit tests successful"
+          
+      - name: Run build all servers
+        run: |
+          echo "🔌 Building all servers..."
+          make build-all
+          echo "✅ All servers built successfully"
+
+      - name: Test make pack and verify contents
+        run: |
+          echo "📦 Testing make pack..."
+          make pack
+          
+          # Check that a DXT file was created (find any .dxt file)
+          DXT_FILE=$(ls *.dxt 2>/dev/null | head -1)
+          if [ -z "$DXT_FILE" ]; then
+            echo "❌ No .dxt file found"
+            echo "Files in directory:"
+            ls -la
+            exit 1
+          fi
+          echo "✅ Found DXT file: $DXT_FILE"
+          
+          # Install unzip if not available (should be available in ubuntu-latest)
+          if ! command -v unzip &> /dev/null; then
+            echo "Installing unzip..."
+            sudo apt-get update && sudo apt-get install -y unzip
+          fi
+          
+          # Extract the package using unzip
+          echo "📂 Extracting package with unzip..."
+          mkdir -p test-extract
+          unzip -q "$DXT_FILE" -d test-extract
+          
+          # Show extracted contents for debugging
+          echo "📁 Extracted contents:"
+          find test-extract -type f | head -20
+          
+          # Verify required files exist
+          echo "🔍 Verifying package contents..."
+          
+          if [ ! -f test-extract/stdio_server ]; then
+            echo "❌ stdio_server missing"
+            ls -la test-extract/
+            exit 1
+          fi
+          echo "✅ stdio_server found"
+          
+          if [ ! -f test-extract/manifest.json ]; then
+            echo "❌ manifest.json missing"
+            ls -la test-extract/
+            exit 1
+          fi
+          echo "✅ manifest.json found"
+          
+          echo "✅ make pack successful - all required files present"
+
+      - name: Test cargo-release dry-run
+        run: |
+          echo "🚀 Testing cargo-release dry-run..."
+          cargo release patch --dry-run || echo "⚠️ cargo-release dry-run completed (may warn about no changes)"
+          echo "✅ cargo-release dry-run test completed"
+          
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Test scripts/image.sh build
+        run: |
+          echo "🐳 Testing scripts/image.sh build..."
+          
+          # Make script executable
+          chmod +x scripts/image.sh
+
+          echo "🐳 Using .env for build test"
+          
+          # Check what container runtime is available (podman takes precedence)
+          echo "🔍 Checking available container runtimes..."
+          CONTAINER_RUNTIME=""
+          if command -v podman &> /dev/null; then
+            echo "✅ Podman available: $(podman --version)"
+            CONTAINER_RUNTIME="podman"
+          elif command -v docker &> /dev/null; then
+            echo "✅ Docker available: $(docker --version)"
+            CONTAINER_RUNTIME="docker"
+          else
+            echo "❌ Neither Podman nor Docker found"
+            exit 1
+          fi
+          echo "🎯 Will use: $CONTAINER_RUNTIME"
+          
+          # Run the build
+          scripts/image.sh build
+          
+          # Check images with the detected runtime first, then fallback to the other
+          echo "🔍 Checking for created images..."
+          
+          FOUND=false
+          
+          # Check with primary runtime
+          echo "Checking with $CONTAINER_RUNTIME:"
+          $CONTAINER_RUNTIME images || echo "$CONTAINER_RUNTIME images command failed"
+          
+          if $CONTAINER_RUNTIME images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "compatibility-engine-mcp"; then
+            echo "✅ Found image with $CONTAINER_RUNTIME"
+            FOUND=true
+          fi
+          
+          # If not found and using podman, also check docker
+          if [ "$FOUND" = false ] && [ "$CONTAINER_RUNTIME" = "podman" ] && command -v docker &> /dev/null; then
+            echo "Checking with Docker as fallback:"
+            docker images || echo "Docker images command failed"
+            
+            if docker images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "compatibility-engine-mcp"; then
+              echo "✅ Found image with Docker"
+              FOUND=true
+            fi
+          fi
+          
+          # If not found and using docker, also check podman
+          if [ "$FOUND" = false ] && [ "$CONTAINER_RUNTIME" = "docker" ] && command -v podman &> /dev/null; then
+            echo "Checking with Podman as fallback:"
+            podman images || echo "Podman images command failed"
+            
+            if podman images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "compatibility-engine-mcp"; then
+              echo "✅ Found image with Podman"
+              FOUND=true
+            fi
+          fi
+          
+          if [ "$FOUND" = false ]; then
+            echo "❌ Container image not found with any runtime"
+            echo "Podman images:"
+            podman images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}" 2>/dev/null || echo "Podman not available"
+            echo "Docker images:"
+            docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}" 2>/dev/null || echo "Docker not available"
+            exit 1
+          fi
+          
+          echo "✅ scripts/image.sh build successful"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            *.dxt
+            target/release/stdio_server
+            target/release/sse_server
+            target/release/mcp_server
+          retention-days: 7
+
+  # Production container build and push job  
+  build-and-push:
+    name: Build and Push Production Container
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./artifacts/
+
+      - name: Setup Docker Buildx with cache
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      # - name: Create production .env file
+      #   run: |
+      #     cat > .env << EOF
+      #     # Production Container Registry Configuration
+      #     REGISTRY=${{ secrets.CONTAINER_REGISTRY }}
+          
+      #     # Application details (production build)
+      #     APP_NAME=compatibility-engine-mcp-server
+      #     MAINTAINER="Alpha Hack Group <alpha@github.com>"
+      #     DESCRIPTION="Compatibility Engine MCP Server - Model Context Protocol server for compatibility evaluation"
+      #     VERSION=${GITHUB_SHA::8}
+      #     PORT=8001
+      #     SOURCE=https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git
+          
+      #     # Base image configuration
+      #     BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal
+      #     BASE_TAG=9.6
+          
+      #     # Production optimizations
+      #     CACHE_FLAG=
+      #     EOF
+          
+      #     echo "📋 Production .env created:"
+      #     cat .env
+
+      - name: Setup Rust toolchain (for minimal rebuild)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Login to Container Registry
+        run: |
+          source .env
+          # Determine registry type and login
+          if [[ "${REGISTRY}" == *"quay.io"* ]]; then
+            echo "Logging in to Quay.io..."
+            echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login quay.io -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+          elif [[ "${REGISTRY}" == *"docker.io"* ]]; then
+            echo "Logging in to Docker Hub..."
+            echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login docker.io -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+          else
+            echo "Logging in to custom registry..."
+            echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "${REGISTRY}" -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+          fi
+
+      - name: Build production container image
+        run: |
+          echo "🐳 Building production container image..."
+          chmod +x scripts/image.sh
+          
+          # Use Docker buildkit for better caching
+          export DOCKER_BUILDKIT=1
+          export BUILDKIT_PROGRESS=plain
+          
+          scripts/image.sh build
+
+      - name: Push container image to registry
+        run: |
+          echo "🚀 Pushing production container image..."
+          scripts/image.sh push
+
+      - name: Show container image info
+        run: |
+          echo "📋 Production container image information:"
+          scripts/image.sh info

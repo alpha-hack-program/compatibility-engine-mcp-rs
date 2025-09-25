@@ -1,0 +1,21 @@
+{
+  "dxt_version": "1.1.1",
+  "name": "compatibility-engine-mcp-server",
+  "display_name": "Compatibility Engine MCP Server",
+  "version": "1.1.1",
+  "description": "Compatibility Engine MCP Server with 5 calculation functions",
+  "author": {
+    "name": "Carlos Vicens"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "stdio_server",
+    "mcp_config": {
+      "command": "${__dirname}/stdio_server",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools_generated": true,
+  "license": "MIT"
+}
