@@ -94,9 +94,6 @@ WORKDIR /app
 # Copy the binary from builder stage
 COPY --from=builder /build/target/release/sse_server /app/sse_server
 
-# Copy data files (if any)
-COPY --from=builder /build/src/common/unpaid-leave-assistance-2025.json /app/unpaid-leave-assistance-2025.json
-
 # Set permissions
 RUN chown -R 1001:0 /app && \
     chmod -R g=u /app && \

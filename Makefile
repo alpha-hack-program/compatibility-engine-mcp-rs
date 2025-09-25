@@ -23,6 +23,18 @@ pack: build-stdio
 	chmod +x ./target/release/stdio_server
 	zip -rX eligibility-engine-mcp-server.dxt -j dxt/manifest.json ./target/release/stdio_server
 
+# Build image
+image-build:
+	scripts/image.sh build
+
+# Push image
+image-push:
+	scripts/image.sh push
+
+# Run image
+image-run:
+	scripts/image.sh run
+
 # Test SSE server locally
 test-sse: build-sse
 	@echo "🧪 Testing SSE server..."
@@ -93,6 +105,9 @@ help:
 	@echo "  make build-stdio   - Build stdio server" 
 	@echo "  make build-all     - Build all servers"
 	@echo "  make pack          - Pack MCP server for Claude Desktop"
+	@echo "  make image-build   - Build image"
+	@echo "  make image-push    - Push image"
+	@echo "  make image-run     - Run image"
 	@echo ""
 	@echo "🚀 Release Commands (uses cargo-release):"
 	@echo "  make release-patch - Create patch release (1.0.6 → 1.0.7)"
