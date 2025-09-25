@@ -242,23 +242,23 @@ impl CompatibilityEngine {
         
         // Calculate base penalty
         let base_penalty = days_late * rate_per_day;
-        explanation_parts.push(format!("Base penalty: {} days × ${} = ${:.2}", days_late, rate_per_day, base_penalty));
+        explanation_parts.push(format!("Base penalty: {} days × {} = {:.2}", days_late, rate_per_day, base_penalty));
         
         // Apply cap
         let penalty = base_penalty.min(cap);
         if base_penalty > cap {
-            explanation_parts.push(format!("Applied cap: ${:.2} capped at ${:.2}", base_penalty, cap));
-            warnings.push(format!("Base penalty ${:.2} exceeded cap of ${:.2}", base_penalty, cap));
+            explanation_parts.push(format!("Applied cap: {:.2} capped at {:.2}", base_penalty, cap));
+            warnings.push(format!("Base penalty {:.2} exceeded cap of {:.2}", base_penalty, cap));
         } else {
-            explanation_parts.push(format!("No cap applied (${:.2} ≤ ${:.2})", base_penalty, cap));
+            explanation_parts.push(format!("No cap applied ({:.2} ≤ {:.2})", base_penalty, cap));
         }
         
         // Calculate interest
         let interest = penalty * interest_rate;
-        explanation_parts.push(format!("Interest: ${:.2} × {:.1}% = ${:.2}", penalty, interest_rate * 100.0, interest));
+        explanation_parts.push(format!("Interest: {:.2} × {:.1}% = {:.2}", penalty, interest_rate * 100.0, interest));
         
         let final_penalty = penalty + interest;
-        explanation_parts.push(format!("Final penalty: ${:.2} + ${:.2} = ${:.2}", penalty, interest, final_penalty));
+        explanation_parts.push(format!("Final penalty: {:.2} + {:.2} = {:.2}", penalty, interest, final_penalty));
         
         if interest_rate > 0.1 {
             warnings.push(format!("High interest rate: {:.1}%", interest_rate * 100.0));
@@ -318,7 +318,7 @@ impl CompatibilityEngine {
 
         let mut tax = 0.0;
         let mut remaining_income = income;
-        explanation_parts.push(format!("Starting income: ${:.2}", income));
+        explanation_parts.push(format!("Starting income: {:.2}", income));
         
         // Apply progressive brackets
         for (i, &threshold) in thresholds.iter().enumerate() {
@@ -339,7 +339,7 @@ impl CompatibilityEngine {
             remaining_income -= taxable_in_bracket;
             
             explanation_parts.push(format!(
-                "Bracket {} (${:.0}-${:.0}): ${:.2} × {:.1}% = ${:.2}", 
+                "Bracket {} ({:.0}-{:.0}): {:.2} × {:.1}% = {:.2}", 
                 i + 1, prev_threshold, threshold, taxable_in_bracket, rates[i] * 100.0, bracket_tax
             ));
         }
@@ -352,24 +352,24 @@ impl CompatibilityEngine {
             
             let prev_threshold = if thresholds.is_empty() { 0.0 } else { thresholds[thresholds.len() - 1] };
             explanation_parts.push(format!(
-                "Highest bracket (${:.0}+): ${:.2} × {:.1}% = ${:.2}", 
+                "Highest bracket ({:.0}+): {:.2} × {:.1}% = {:.2}", 
                 prev_threshold, remaining_income, highest_rate * 100.0, highest_bracket_tax
             ));
         }
         
-        explanation_parts.push(format!("Subtotal tax: ${:.2}", tax));
+        explanation_parts.push(format!("Subtotal tax: {:.2}", tax));
         
         // Apply surcharge if tax exceeds threshold
         if tax > surcharge_threshold {
             let surcharge = tax * surcharge_rate;
             tax += surcharge;
             explanation_parts.push(format!(
-                "Surcharge applied (tax ${:.2} > ${:.2}): ${:.2} × {:.1}% = ${:.2}", 
+                "Surcharge applied (tax {:.2} > {:.2}): {:.2} × {:.1}% = {:.2}", 
                 tax - surcharge, surcharge_threshold, tax - surcharge, surcharge_rate * 100.0, surcharge
             ));
-            explanation_parts.push(format!("Final tax with surcharge: ${:.2}", tax));
+            explanation_parts.push(format!("Final tax with surcharge: {:.2}", tax));
         } else {
-            explanation_parts.push(format!("No surcharge (tax ${:.2} ≤ ${:.2})", tax, surcharge_threshold));
+            explanation_parts.push(format!("No surcharge (tax {:.2} ≤ {:.2})", tax, surcharge_threshold));
         }
         
         if surcharge_rate > 0.05 {
@@ -524,7 +524,7 @@ impl CompatibilityEngine {
         }
         
         let mut remaining = cash_available;
-        explanation_parts.push(format!("Starting cash: ${:.2}", cash_available));
+        explanation_parts.push(format!("Starting cash: {:.2}", cash_available));
         
         // Pay senior debt first
         let senior_payment = remaining.min(senior_debt);
@@ -532,16 +532,16 @@ impl CompatibilityEngine {
         
         if senior_debt > 0.0 {
             if senior_payment == senior_debt {
-                explanation_parts.push(format!("Senior debt: ${:.2} fully paid", senior_debt));
+                explanation_parts.push(format!("Senior debt: {:.2} fully paid", senior_debt));
             } else {
-                explanation_parts.push(format!("Senior debt: ${:.2} partially paid (${:.2} of ${:.2})", senior_payment, senior_payment, senior_debt));
-                warnings.push(format!("Senior debt underpaid by ${:.2}", senior_debt - senior_payment));
+                explanation_parts.push(format!("Senior debt: {:.2} partially paid ({:.2} of {:.2})", senior_payment, senior_payment, senior_debt));
+                warnings.push(format!("Senior debt underpaid by {:.2}", senior_debt - senior_payment));
             }
         } else {
             explanation_parts.push("No senior debt to pay".to_string());
         }
         
-        explanation_parts.push(format!("Remaining after senior: ${:.2}", remaining));
+        explanation_parts.push(format!("Remaining after senior: {:.2}", remaining));
         
         // Pay junior debt second
         let junior_payment = remaining.min(junior_debt);
@@ -549,32 +549,32 @@ impl CompatibilityEngine {
         
         if junior_debt > 0.0 {
             if junior_payment == junior_debt {
-                explanation_parts.push(format!("Junior debt: ${:.2} fully paid", junior_debt));
+                explanation_parts.push(format!("Junior debt: {:.2} fully paid", junior_debt));
             } else if junior_payment > 0.0 {
-                explanation_parts.push(format!("Junior debt: ${:.2} partially paid (${:.2} of ${:.2})", junior_payment, junior_payment, junior_debt));
-                warnings.push(format!("Junior debt underpaid by ${:.2}", junior_debt - junior_payment));
+                explanation_parts.push(format!("Junior debt: {:.2} partially paid ({:.2} of {:.2})", junior_payment, junior_payment, junior_debt));
+                warnings.push(format!("Junior debt underpaid by {:.2}", junior_debt - junior_payment));
             } else {
                 explanation_parts.push("Junior debt: no funds available".to_string());
-                warnings.push(format!("Junior debt unpaid (${:.2})", junior_debt));
+                warnings.push(format!("Junior debt unpaid ({:.2})", junior_debt));
             }
         } else {
             explanation_parts.push("No junior debt to pay".to_string());
         }
         
-        explanation_parts.push(format!("Remaining for equity: ${:.2}", remaining));
+        explanation_parts.push(format!("Remaining for equity: {:.2}", remaining));
         
         // Remainder goes to equity
         let equity_payment = remaining;
         
         if equity_payment > 0.0 {
-            explanation_parts.push(format!("Equity distribution: ${:.2}", equity_payment));
+            explanation_parts.push(format!("Equity distribution: {:.2}", equity_payment));
         } else {
             explanation_parts.push("No funds available for equity".to_string());
         }
         
         let total_debt = senior_debt + junior_debt;
         if cash_available < total_debt {
-            warnings.push(format!("Insufficient cash: ${:.2} available vs ${:.2} total debt", cash_available, total_debt));
+            warnings.push(format!("Insufficient cash: {:.2} available vs {:.2} total debt", cash_available, total_debt));
         }
         
         DistributeWaterfallResponse {
@@ -620,9 +620,9 @@ impl CompatibilityEngine {
             };
         }
         
-        explanation_parts.push(format!("Area Median Income (AMI): ${:.2}", ami));
+        explanation_parts.push(format!("Area Median Income (AMI): {:.2}", ami));
         explanation_parts.push(format!("Household size: {}", household_size));
-        explanation_parts.push(format!("Household income: ${:.2}", income));
+        explanation_parts.push(format!("Household income: {:.2}", income));
         explanation_parts.push(format!("Has other subsidy: {}", if has_other_subsidy { "Yes" } else { "No" }));
         
         // Check subsidy requirement first
@@ -644,12 +644,12 @@ impl CompatibilityEngine {
         
         // Calculate threshold
         let base_threshold = 0.60 * ami;
-        explanation_parts.push(format!("Base income threshold: 60% of AMI = ${:.2}", base_threshold));
+        explanation_parts.push(format!("Base income threshold: 60% of AMI = {:.2}", base_threshold));
         
         let threshold = if household_size > 4 {
             let adjusted_threshold = base_threshold * 1.10;
             explanation_parts.push(format!(
-                "Household size adjustment: {} > 4, threshold increased by 10% to ${:.2}", 
+                "Household size adjustment: {} > 4, threshold increased by 10% to {:.2}", 
                 household_size, adjusted_threshold
             ));
             adjusted_threshold
@@ -661,7 +661,7 @@ impl CompatibilityEngine {
         // Check income eligibility
         let eligible = income <= threshold;
         explanation_parts.push(format!(
-            "Income eligibility: ${:.2} {} ${:.2} - {}", 
+            "Income eligibility: {:.2} {} {:.2} - {}", 
             income, 
             if eligible { "≤" } else { ">" }, 
             threshold,
@@ -734,7 +734,7 @@ impl CompatibilityEngine {
 
     /// Calculate progressive tax with surcharge
     /// Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate
-    #[tool(description = "Calculate progressive tax with surcharge. Returns structured response with tax amount, detailed explanation of bracket calculations and surcharge application, errors for invalid inputs, and warnings. Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate. Tax brackets, rates, and surcharge values are configured via environment variables. Example: $40,000 income → uses configured tax brackets")]
+    #[tool(description = "Calculate progressive tax with surcharge. Returns structured response with tax amount, detailed explanation of bracket calculations and surcharge application, errors for invalid inputs, and warnings. Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate. Tax brackets, rates, and surcharge values are configured via environment variables. Example: $40000 income → uses configured tax brackets")]
     pub async fn calc_tax(
         &self,
         Parameters(params): Parameters<CalcTaxParams>
@@ -839,7 +839,7 @@ impl CompatibilityEngine {
 
     /// Check housing grant eligibility
     /// Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy
-    #[tool(description = "Check housing grant eligibility. Returns structured response with eligibility result, detailed explanation of threshold calculations and checks, validation errors, and additional requirements. Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy. Example A: AMI = 50,000, household_size = 5, income = 32,000, no subsidy → eligible. Example B: same AMI & size, income = 34,000 → not eligible. Example C: income = 32,000 but already subsidized → not eligible")]
+    #[tool(description = "Check housing grant eligibility. Returns structured response with eligibility result, detailed explanation of threshold calculations and checks, validation errors, and additional requirements. Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy. Example A: AMI = 50000, household_size = 5, income = 32000, no subsidy → eligible. Example B: same AMI & size, income = 34000 → not eligible. Example C: income = 32000 but already subsidized → not eligible")]
     pub async fn check_housing_grant(
         &self,
         Parameters(params): Parameters<CheckHousingGrantParams>
@@ -937,8 +937,8 @@ mod tests {
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
         
-        // Expected: 10,000 * 0.10 + 30,000 * 0.20 = 1,000 + 6,000 = 7,000
-        // Surcharge: 7,000 > 5,000 (surcharge_threshold), so 7,000 + (7,000 * 0.02) = 7,140
+        // Expected: 10000 * 0.10 + 30000 * 0.20 = 1000 + 6000 = 7000
+        // Surcharge: 7000 > 5000 (surcharge_threshold), so 7000 + (7000 * 0.02) = 7,140
         assert_eq!(response.tax, 7140.0);
         assert!(response.errors.is_empty());
         assert!(response.explanation.contains("Bracket 1"));
@@ -992,8 +992,8 @@ mod tests {
         assert_eq!(response.distribution.junior, 7_000_000.0);
         assert_eq!(response.distribution.equity, 0.0);
         assert!(response.errors.is_empty());
-        assert!(response.explanation.contains("Senior debt: $8000000.00 fully paid"));
-        assert!(response.explanation.contains("Junior debt: $7000000.00 partially paid"));
+        assert!(response.explanation.contains("Senior debt: 8000000.00 fully paid"));
+        assert!(response.explanation.contains("Junior debt: 7000000.00 partially paid"));
     }
 
     #[tokio::test]
@@ -1014,7 +1014,7 @@ mod tests {
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
         
-        // Expected: threshold = 0.60 * 50,000 * 1.10 = 33,000, income 32,000 ≤ 33,000, eligible
+        // Expected: threshold = 0.60 * 50000 * 1.10 = 33000, income 32000 ≤ 33000, eligible
         assert_eq!(response.eligible, true);
         assert!(response.errors.is_empty());
         assert!(response.explanation.contains("5 > 4, threshold increased by 10%"));
@@ -1039,7 +1039,7 @@ mod tests {
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
         
-        // Expected: threshold = 33,000, income 34,000 > 33,000, not eligible
+        // Expected: threshold = 33000, income 34000 > 33000, not eligible
         assert_eq!(response.eligible, false);
         assert!(response.errors.is_empty());
         assert!(response.explanation.contains("NOT ELIGIBLE"));
@@ -1166,8 +1166,8 @@ mod tests {
         
         // Uses configured defaults: thresholds=[10000], rates=[0.10,0.20]
         // surcharge_threshold=5000, surcharge_rate=0.02
-        // Expected: 10,000 * 0.10 + 40,000 * 0.20 = 1,000 + 8,000 = 9,000
-        // Surcharge: 9,000 > 5,000, so 9,000 + (9,000 * 0.02) = 9,000 + 180 = 9,180
+        // Expected: 10000 * 0.10 + 40000 * 0.20 = 1000 + 8000 = 9000
+        // Surcharge: 9000 > 5000, so 9000 + (9000 * 0.02) = 9000 + 180 = 9,180
         assert_eq!(response.tax, 9180.0);
         assert!(response.errors.is_empty());
     }
