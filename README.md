@@ -8,6 +8,10 @@
 
 An example Model Context Protocol (MCP) server developed in Rust that provides five strongly-typed calculation and compatibility functions. This project demonstrates how to build MCP servers with explicit computational logic.
 
+## Why an MCP Server like this?
+
+Enterprises who need to comply with regulations that make them to have their data secure and on-premise but at the same time want to leverage the power of AI usually rely on small models. These models alveit powerful some times are not capable enough to deal with complex. multi-step, logic and tend to forget
+
 ## ⚠️ **DISCLAIMER**
 
 This server provides five calculation functions that demonstrate various computational patterns commonly used in business applications. All calculations are explicit and transparent.
@@ -49,13 +53,336 @@ For real financial or legal calculations, please consult appropriate professiona
 
 | Function | Description | Example |
 |----------|-------------|----------|
-| **calc_penalty** | Calculate penalty with cap and interest | 12 days late × $100/day = $1,050 with interest |
-| **calc_tax** | Progressive tax with surcharge | $40,000 income = $7,140 tax with surcharge |
+| **calc_penalty** | Calculate penalty with cap and interest | 12 days late × 100/day = 1,050 with interest |
+| **calc_tax** | Progressive tax with surcharge | 40,000 income = 7,140 tax with surcharge |
 | **check_voting** | Check voting proposal eligibility | 70 out of 100 voters, 55 yes votes = passes |
-| **distribute_waterfall** | Distribute cash in waterfall structure | $15M → Senior: $8M, Junior: $7M, Equity: $0 |
+| **distribute_waterfall** | Distribute cash in waterfall structure | 15M → Senior: 8M, Junior: 7M, Equity: 0 |
 | **check_housing_grant** | Check housing grant eligibility | AMI $50K, size 5, income $32K = eligible |
 
 > **Note**: These functions demonstrate common calculation patterns.
+
+## 💬 Sample LLM Queries
+
+When using this MCP agent with an LLM, users can ask natural language questions that trigger the appropriate calculation tools. Here are realistic business scenarios:
+
+### 🏛️ Penalty Calculations
+
+#### Example 1: Extended Delay with Cap Applied
+**Query:** "We have a client who is 15 days late on their contractual obligations. What penalty should we charge them according to our standard terms?"
+
+**Result:** **$1,050**
+- Base penalty: 15 days × $100 = $1,500
+- Cap applied: $1,500 capped at $1,000
+- Interest: $1,000 × 5.0% = $50
+- **Total Penalty: $1,050**
+- **Warning:** Base penalty exceeded cap of $1,000
+
+#### Example 2: Minor Delay Under Cap
+**Query:** "A vendor delivered our order 8 days late. Can you calculate the liquidated damages we should apply?"
+
+**Result:** **$840**
+- Base penalty: 8 days × $100 = $800
+- No cap applied ($800 ≤ $1,000)
+- Interest: $800 × 5.0% = $40
+- **Total Penalty: $840**
+
+#### Example 3: Significant Delay with Maximum Penalty
+**Query:** "Our customer missed the payment deadline by 25 days. What's the total penalty including interest charges?"
+
+**Result:** **$1,050**
+- Base penalty: 25 days × $100 = $2,500
+- Cap applied: $2,500 capped at $1,000
+- Interest: $1,000 × 5.0% = $50
+- **Total Penalty: $1,050**
+- **Warning:** Base penalty exceeded cap of $1,000
+
+#### Example 4: Moderate Delay with Cap Applied
+**Query:** "Help me calculate the late delivery penalty for a project that was completed 12 days after the agreed deadline."
+
+**Result:** **$1,050**
+- Base penalty: 12 days × $100 = $1,200
+- Cap applied: $1,200 capped at $1,000
+- Interest: $1,000 × 5.0% = $50
+- **Total Penalty: $1,050**
+- **Warning:** Base penalty exceeded cap of $1,000
+
+#### Penalty Calculation Rules
+- **Daily Rate:** $100 per day late
+- **Maximum Cap:** $1,000 (base penalty cannot exceed this amount)
+- **Interest Rate:** 5% applied to the final penalty amount (after cap)
+- **Calculation Order:** Daily penalty → apply cap → add interest
+- **Warning System:** Alerts when base penalty exceeds the cap limit
+
+*The LLM will use `calc_penalty` with the specified days and apply configured defaults (100/day rate, 1000 cap, 5% interest).*
+
+### 💰 Tax Calculations
+
+#### Example 1: Mid-Income with Surcharge Applied
+**Query:** "I need to calculate the income tax for a resident of Lysmark who earned 40000 this year. What's their total tax liability including any surcharges?"
+
+**Result:** **$7,140**
+- Bracket 1 (0-10,000): $10,000 × 10.0% = $1,000
+- Bracket 2 (10,000+): $30,000 × 20.0% = $6,000
+- Subtotal: $7,000
+- Surcharge (tax > $5,000): $7,000 × 2.0% = $140
+- **Total Tax: $7,140**
+
+#### Example 2: Higher Income with Surcharge
+**Query:** "Can you help me figure out the progressive tax calculation for someone with an annual income of 75000 in the Republic of Lysmark?"
+
+**Result:** **$14,280**
+- Bracket 1 (0-10,000): $10,000 × 10.0% = $1,000
+- Bracket 2 (10,000+): $65,000 × 20.0% = $13,000
+- Subtotal: $14,000
+- Surcharge (tax > $5,000): $14,000 × 2.0% = $280
+- **Total Tax: $14,280**
+
+#### Example 3: High Income with Maximum Surcharge
+**Query:** "A taxpayer in our system has declared income of 120000. What's their tax obligation under the current brackets and surcharge rules?"
+
+**Result:** **$23,460**
+- Bracket 1 (0-10,000): $10,000 × 10.0% = $1,000
+- Bracket 2 (10,000+): $110,000 × 20.0% = $22,000
+- Subtotal: $23,000
+- Surcharge (tax > $5,000): $23,000 × 2.0% = $460
+- **Total Tax: $23,460**
+
+#### Example 4: Lower Income with No Surcharge
+**Query:** "What would be the total tax (including surcharge) for a Lysmark resident earning 28000 annually?"
+
+**Result:** **$4,600**
+- Bracket 1 (0-10,000): $10,000 × 10.0% = $1,000
+- Bracket 2 (10,000+): $18,000 × 20.0% = $3,600
+- Subtotal: $4,600
+- No surcharge (tax ≤ $5,000)
+- **Total Tax: $4,600**
+
+#### Progressive Tax System Rules
+- **Bracket 1:** 0-$10,000 taxed at 10%
+- **Bracket 2:** $10,000+ taxed at 20%
+- **Surcharge:** 2% applied when total tax exceeds $5,000
+- **Calculation Order:** Progressive brackets first, then surcharge applied to total tax amount
+
+*The LLM will use `calc_tax` and apply Lysmark tax brackets (10% up to 10000, 20% above) plus surcharge rules (2% if tax > 5000).*
+
+### 🗳️ Voting Validations
+
+#### Example 1: Board Meeting (Ordinary Resolution)
+**Query:** "We held a board meeting with 150 eligible voters. 95 people participated and 52 voted yes on an ordinary resolution. Did the proposal pass?"
+
+**Result:** ✅ **PASSED** with WARNING
+- Turnout: 95/150 (63.3%) - meets ≥60% requirement
+- Yes votes: 52/95 (54.7%) - exceeds >50% requirement for general proposals
+- Warning: Low turnout (below 70%)
+
+#### Example 2: Shareholder Meeting (Charter Amendment)
+**Query:** "Our shareholder meeting had 200 eligible participants, 130 showed up, and 88 voted in favor of amending the corporate charter. Is this amendment approved?"
+
+**Result:** ✅ **PASSED** with WARNING
+- Turnout: 130/200 (65.0%) - meets ≥60% requirement
+- Yes votes: 88/130 (67.7%) - meets ≥66.7% requirement for amendments
+- Warning: Low turnout (below 70%)
+
+#### Example 3: Cooperative General Proposal
+**Query:** "In our cooperative, we have 80 members eligible to vote. 55 attended the meeting and 35 voted yes on a general proposal. What's the outcome?"
+
+**Result:** ✅ **PASSED** with WARNING
+- Turnout: 55/80 (68.8%) - meets ≥60% requirement
+- Yes votes: 35/55 (63.6%) - exceeds >50% requirement for general proposals
+- Warning: Low turnout (below 70%)
+
+#### Example 4: Constitutional Amendment Validation
+**Query:** "Can you validate this voting result: 300 eligible voters, 185 turnout, 125 yes votes for a constitutional amendment?"
+
+**Result:** ✅ **PASSED** with WARNING
+- Turnout: 185/300 (61.7%) - meets ≥60% requirement
+- Yes votes: 125/185 (67.6%) - meets ≥66.7% requirement for amendments
+- Warning: Low turnout (below 70%)
+
+#### Voting Requirements Summary
+- **Minimum Turnout:** ≥60% of eligible voters
+- **General Proposals:** >50% of votes cast
+- **Amendments:** ≥66.7% of votes cast
+- **Optimal Turnout:** ≥70% (to avoid warnings)
+
+*The LLM will use `check_voting` to verify turnout requirements (≥60%) and approval thresholds (>50% for general, ≥66.7% for amendments).*
+
+### 💸 Waterfall Distributions
+
+#### Example 1: Mixed Distribution Scenario
+**Query:** "We have 15 million in cash to distribute. Senior debt holders are owed 8 million and junior debt holders are owed 12 million. How should we allocate the funds?"
+
+**Result:** 
+- Senior Debt: $8,000,000 (fully paid)
+- Junior Debt: $7,000,000 (partially paid - $5M shortfall)
+- Equity: $0
+- **Warnings:** Junior debt underpaid by $5,000,000; Insufficient cash ($15M available vs $20M total debt)
+
+#### Example 2: Full Senior Payment with Junior Shortfall
+**Query:** "Our liquidation proceeds total 22 million. We have 18 million in senior debt and 6 million in junior debt. What's the distribution to each class?"
+
+**Result:**
+- Senior Debt: $18,000,000 (fully paid)
+- Junior Debt: $4,000,000 (partially paid - $2M shortfall)
+- Equity: $0
+- **Warnings:** Junior debt underpaid by $2,000,000; Insufficient cash ($22M available vs $24M total debt)
+
+#### Example 3: Limited Distribution with Equity Question
+**Query:** "Help me calculate the waterfall distribution: 5.5 million available, 4 million senior debt, 3 million junior debt. How much goes to equity?"
+
+**Result:**
+- Senior Debt: $4,000,000 (fully paid)
+- Junior Debt: $1,500,000 (partially paid - $1.5M shortfall)
+- Equity: $0 (no funds remaining)
+- **Warnings:** Junior debt underpaid by $1,500,000; Insufficient cash ($5.5M available vs $7M total debt)
+
+#### Example 4: Large Distribution with No Equity
+**Query:** "We're distributing 30 million in proceeds with 15 million senior obligations and 20 million junior obligations. What's the allocation breakdown?"
+
+**Result:**
+- Senior Debt: $15,000,000 (fully paid)
+- Junior Debt: $15,000,000 (partially paid - $5M shortfall)
+- Equity: $0
+- **Warnings:** Junior debt underpaid by $5,000,000; Insufficient cash ($30M available vs $35M total debt)
+
+#### Waterfall Distribution Rules
+- **Priority 1:** Senior debt (paid first, up to full amount owed)
+- **Priority 2:** Junior debt (paid second, up to full amount owed)
+- **Priority 3:** Equity (receives any remaining funds after all debt is satisfied)
+- **Payment Order:** Sequential - junior debt only receives payments after senior debt is fully satisfied
+- **Warnings Generated:** When junior debt cannot be fully paid or total cash is insufficient for all obligations
+
+*The LLM will use `distribute_waterfall` to apply priority rules: senior debt paid first, then junior debt, remainder to equity.*
+
+### 🏠 Housing Grant Eligibility
+
+#### Example 1: Large Family with No Other Subsidies
+**Query:** "A family of 6 with household income of 35000 is applying for housing assistance. The local AMI is 60000 and they have no other housing subsidies. Are they eligible?"
+
+**Result:** ✅ **ELIGIBLE**
+- Base threshold: 60% of AMI = $36,000
+- Adjusted threshold: $39,600 (10% increase for household size > 4)
+- Income: $35,000 ≤ $39,600 ✓
+- No other subsidies ✓
+- **Additional Requirements:** Proof of income, first-time homebuyer criteria, large household documentation
+
+#### Example 2: Small Household Well Under Threshold
+**Query:** "Can you check housing grant eligibility for a 3-person household earning 25000 annually? The Area Median Income here is 50000 and they're not receiving other aid."
+
+**Result:** ✅ **ELIGIBLE**
+- Base threshold: 60% of AMI = $30,000
+- No household size adjustment (3 ≤ 4)
+- Income: $25,000 ≤ $30,000 ✓
+- No other subsidies ✓
+- **Additional Requirements:** Proof of income, first-time homebuyer criteria
+
+#### Example 3: Large Family with Existing Subsidy
+**Query:** "We need to verify eligibility for a large family (7 members) with 40000 income. AMI is 65000 and they currently receive Section 8 housing assistance. What's their status?"
+
+**Result:** ❌ **NOT ELIGIBLE**
+- Reason: Already has another housing subsidy (Section 8)
+- **Requirement:** Must not have any other housing subsidies or assistance
+
+#### Example 4: Couple Close to Income Threshold
+**Query:** "A couple (2-person household) earning 32000 wants to apply for our housing program. Local AMI is 55000 and they have no other subsidies. Do they qualify?"
+
+**Result:** ✅ **ELIGIBLE**
+- Base threshold: 60% of AMI = $33,000
+- No household size adjustment (2 ≤ 4)
+- Income: $32,000 ≤ $33,000 ✓
+- No other subsidies ✓
+- **Additional Requirements:** Proof of income, first-time homebuyer criteria, verify all deductions included (close to threshold)
+
+#### Housing Grant Eligibility Rules
+- **Base Income Threshold:** 60% of Area Median Income (AMI)
+- **Large Household Adjustment:** 10% increase if household size > 4
+- **Subsidy Restriction:** Cannot have any other housing subsidies
+- **Documentation Required:** Proof of income and first-time homebuyer status
+- **Special Considerations:** Large households and applicants near income thresholds may require additional verification
+
+*The LLM will use `check_housing_grant` to check income limits (60% of AMI, +10% for households >4), subsidy exclusivity rules, and provide detailed eligibility determination.*
+
+### 🔄 Complex Multi-Tool Scenarios
+
+#### Example 1: Corporate Restructuring Analysis
+**Query:** "We're restructuring a company with the following situation: 25 million in liquidation proceeds to distribute, 12 million senior debt, 18 million junior debt. The board vote was 180 eligible, 125 turnout, 85 yes votes for this restructuring plan. One of our contractors was 18 days late on deliverables. Can you help me understand all the financial and governance implications?"
+
+**Analysis Results:**
+
+**💰 Waterfall Distribution:**
+- Senior Debt: $12,000,000 (fully paid)
+- Junior Debt: $13,000,000 (partially paid - $5M shortfall)
+- Equity: $0
+- **Warnings:** Junior debt underpaid by $5,000,000; Insufficient cash ($25M vs $30M total debt)
+
+**🗳️ Board Vote on Restructuring:**
+- **Result: PASSED** ✅
+- Turnout: 125/180 (69.4%) - meets ≥60% requirement
+- Yes votes: 85/125 (68.0%) - exceeds >50% requirement for general proposals
+- **Warning:** Low turnout (below 70%)
+
+**⚖️ Contractor Penalty:**
+- **Penalty: $1,050**
+- Base penalty: 18 days × $100 = $1,800 (capped at $1,000)
+- Interest: $1,000 × 5% = $50
+- **Warning:** Base penalty exceeded cap
+
+**Overall Implications:**
+- Restructuring is legally approved despite low board engagement
+- Junior creditors face significant losses ($5M shortfall)
+- Additional contractor penalties reduce available cash by $1,050
+
+---
+
+#### Example 2: Multi-Client Compliance Assessment
+**Query:** "I'm advising a client on multiple compliance issues: Their annual income is 95000 (need tax calculation), they're 22 days late on a contract (penalty calculation), they want to apply for housing assistance (family of 5, income 28000, AMI 45000, no other subsidies). What are all the financial impacts?"
+
+**Analysis Results:**
+
+**💸 Tax Liability (Income: $95,000):**
+- **Total Tax: $18,360**
+- Bracket 1 (0-10,000): $1,000
+- Bracket 2 (10,000+): $17,000
+- Surcharge (2%): $360
+
+**⚖️ Contract Penalty (22 Days Late):**
+- **Total Penalty: $1,050**
+- Base penalty: 22 days × $100 = $2,200 (capped at $1,000)
+- Interest: $1,000 × 5% = $50
+- **Warning:** Base penalty exceeded cap
+
+**🏠 Housing Grant Eligibility (Family of 5, Income: $28,000):**
+- **Result: ELIGIBLE** ✅
+- Base threshold: $27,000 (60% of AMI)
+- Adjusted threshold: $29,700 (10% increase for large household)
+- Income: $28,000 ≤ $29,700 ✓
+- **Requirements:** Income documentation, first-time homebuyer criteria, large household documentation
+- **Note:** Income very close to threshold - verify all deductions
+
+**Financial Summary:**
+- **Tax Obligation:** $18,360
+- **Contract Penalty:** $1,050
+- **Housing Assistance:** Qualified (potential benefit)
+- **Total Financial Impact:** -$19,410 in obligations, plus potential housing assistance savings
+
+**Recommendations:**
+- Pay tax liability and penalty promptly to avoid additional interest
+- Proceed with housing grant application immediately (income is close to threshold)
+- Review contract management to prevent future penalties
+
+*The LLM will use multiple tools (`distribute_waterfall`, `check_voting`, `calc_penalty`, `calc_tax`, `check_housing_grant`) and provide comprehensive analysis.*
+
+### 💡 Usage Tips for LLM Integration
+
+When querying the LLM with this MCP agent:
+
+1. **Be specific with numbers** - Provide exact figures for calculations
+2. **Include context** - Mention if it's for Lysmark jurisdiction, voting type, household details
+3. **Ask for explanations** - The tools provide detailed step-by-step breakdowns
+4. **Combine scenarios** - You can ask about multiple calculations in one query
+5. **Use natural language** - No need to know the exact API parameters
+
+> **Note**: The LLM automatically determines which tools to use based on your question and provides detailed, compliant calculations according to the Republic of Lysmark's legal requirements.
 
 ## 🚀 Quick Start
 

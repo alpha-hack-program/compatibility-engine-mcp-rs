@@ -39,7 +39,7 @@ image-run:
 test-sse: build-sse
 	@echo "🧪 Testing SSE server..."
 	@echo ""
-	RUST_LOG=debug ./target/release/sse_server
+	RUST_LOG=debug BIND_ADDRESS=0.0.0.0:8002 ./target/release/sse_server
 
 # Test MCP server locally
 test-mcp: build-mcp

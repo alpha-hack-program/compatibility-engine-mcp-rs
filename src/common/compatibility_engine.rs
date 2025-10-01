@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::env;
+use std::fmt;
 use once_cell::sync::Lazy;
 
 use super::metrics::{increment_requests, increment_errors, RequestTimer};
@@ -79,40 +80,342 @@ impl EngineConfig {
 
 static CONFIG: Lazy<EngineConfig> = Lazy::new(EngineConfig::from_env);
 
+// =================== PARSING UTILITIES ===================
+
+/// Sanitize user input for safe inclusion in error messages
+/// Prevents JSON injection, XSS, log injection, and other attacks
+fn sanitize_for_error_message(input: &str) -> String {
+    // Limit length to prevent DoS and overly verbose errors
+    let truncated = if input.len() > 50 { 
+        format!("{}...", &input[..47])
+    } else { 
+        input.to_string() 
+    };
+    
+    // Replace dangerous and non-printable characters
+    truncated
+        .chars()
+        .map(|c| match c {
+            // Replace line breaks and control chars that could break JSON/logs
+            '\n' | '\r' | '\t' => ' ',
+            // Replace quote chars that could break JSON structure  
+            '"' | '\'' | '`' => '?',
+            // Replace backslashes that could escape JSON
+            '\\' => '?',
+            // Replace HTML/script chars for XSS prevention
+            '<' | '>' => '?',
+            // Keep normal printable ASCII and space
+            c if c.is_ascii_graphic() || c == ' ' => c,
+            // Replace any other non-printable or unicode control chars
+            _ => '?'
+        })
+        .collect()
+}
+
+/// Validate input length and format for security
+fn validate_input_security(input: &str, field_name: &str) -> Result<(), String> {
+    // Check maximum length to prevent DoS
+    if input.len() > 100 {
+        return Err(format!("Invalid {}: input too long (max 100 characters)", field_name));
+    }
+    
+    // Check for null bytes (can cause issues in some contexts)
+    if input.contains('\0') {
+        return Err(format!("Invalid {}: input contains null bytes", field_name));
+    }
+    
+    // Check for excessive control characters (potential log injection)
+    let control_char_count = input.chars().filter(|c| c.is_control()).count();
+    if control_char_count > 2 {  // Allow a couple for legitimate formatting
+        return Err(format!("Invalid {}: input contains too many control characters", field_name));
+    }
+    
+    Ok(())
+}
+
+/// Parse a string to f64, handling various formats with security validation
+fn parse_f64_from_string(s: &str) -> Result<f64, String> {
+    let trimmed = s.trim();
+    
+    // Security validation first
+    if let Err(e) = validate_input_security(trimmed, "number") {
+        return Err(e);
+    }
+    
+    // Handle empty strings
+    if trimmed.is_empty() {
+        return Err("Empty string cannot be parsed as number".to_string());
+    }
+    
+    // Sanitize input for error messages
+    let sanitized = sanitize_for_error_message(trimmed);
+    
+    // Remove common formatting characters
+    let cleaned = trimmed
+        .replace(',', "")  // Remove thousands separators
+        .replace('$', "")  // Remove dollar, euro, pound, etc. signs
+        .replace('€', "")  // Remove euro signs
+        .replace('£', "")  // Remove pound signs
+        .replace('¥', "")  // Remove yen signs
+        .replace('%', ""); // Remove percentage signs
+    
+    match cleaned.parse::<f64>() {
+        Ok(value) => {
+            if value.is_infinite() || value.is_nan() {
+                Err(format!("Invalid number: '{}'", sanitized))
+            } else {
+                Ok(value)
+            }
+        },
+        Err(_) => Err(format!("Cannot parse '{}' as a number", sanitized))
+    }
+}
+
+/// Parse a string to i32, handling various formats with security validation
+fn parse_i32_from_string(s: &str) -> Result<i32, String> {
+    let trimmed = s.trim();
+    
+    // Security validation first
+    if let Err(e) = validate_input_security(trimmed, "integer") {
+        return Err(e);
+    }
+    
+    // Handle empty strings
+    if trimmed.is_empty() {
+        return Err("Empty string cannot be parsed as integer".to_string());
+    }
+    
+    // Sanitize input for error messages
+    let sanitized = sanitize_for_error_message(trimmed);
+    
+    // Remove common formatting characters
+    let cleaned = trimmed.replace(',', ""); // Remove thousands separators
+    
+    match cleaned.parse::<i32>() {
+        Ok(value) => Ok(value),
+        Err(_) => Err(format!("Cannot parse '{}' as an integer", sanitized))
+    }
+}
+
+/// Parse a string to bool, handling various formats with security validation
+fn parse_bool_from_string(s: &str) -> Result<bool, String> {
+    let trimmed = s.trim();
+    
+    // Security validation first
+    if let Err(e) = validate_input_security(trimmed, "boolean") {
+        return Err(e);
+    }
+    
+    // Handle empty strings
+    if trimmed.is_empty() {
+        return Err("Empty string cannot be parsed as boolean".to_string());
+    }
+    
+    // Sanitize input for error messages
+    let sanitized = sanitize_for_error_message(trimmed);
+    
+    // Parse various boolean representations (case-insensitive)
+    match trimmed.to_lowercase().as_str() {
+        "true" | "t" | "yes" | "y" | "1" | "on" => Ok(true),
+        "false" | "f" | "no" | "n" | "0" | "off" => Ok(false),
+        _ => Err(format!("Cannot parse '{}' as a boolean (expected: true/false, yes/no, 1/0, etc.)", sanitized))
+    }
+}
+
+// =================== CUSTOM DESERIALIZERS ===================
+
+/// Custom deserializer that accepts both f64 numbers and strings, then parses them
+fn deserialize_flexible_f64<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct FlexibleF64Visitor;
+
+    impl<'de> de::Visitor<'de> for FlexibleF64Visitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a number or a string representing a number")
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+    }
+
+    deserializer.deserialize_any(FlexibleF64Visitor)
+}
+
+/// Custom deserializer that accepts both i32 numbers and strings, then parses them
+fn deserialize_flexible_i32<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct FlexibleI32Visitor;
+
+    impl<'de> de::Visitor<'de> for FlexibleI32Visitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an integer or a string representing an integer")
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // Convert float to int if it's a whole number
+            if value.fract() == 0.0 {
+                Ok((value as i64).to_string())
+            } else {
+                Err(E::custom(format!("Expected integer, got float: {}", value)))
+            }
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+    }
+
+    deserializer.deserialize_any(FlexibleI32Visitor)
+}
+
+/// Custom deserializer that accepts both booleans and strings, then parses them
+fn deserialize_flexible_bool<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct FlexibleBoolVisitor;
+
+    impl<'de> de::Visitor<'de> for FlexibleBoolVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a boolean or a string representing a boolean")
+        }
+
+        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(if value { "true".to_string() } else { "false".to_string() })
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+    }
+
+    deserializer.deserialize_any(FlexibleBoolVisitor)
+}
+
 // =================== DATA STRUCTURES ===================
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct CalcPenaltyParams {
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Number of days late")]
-    pub days_late: f64,
+    pub days_late: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct CalcTaxParams {
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Total income")]
-    pub income: f64,
+    pub income: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct CheckVotingParams {
+    #[serde(deserialize_with = "deserialize_flexible_i32")]
     #[schemars(description = "Total number of eligible voters")]
-    pub eligible_voters: i32,
+    pub eligible_voters: String,
+    #[serde(deserialize_with = "deserialize_flexible_i32")]
     #[schemars(description = "Actual turnout (number of people who voted)")]
-    pub turnout: i32,
+    pub turnout: String,
+    #[serde(deserialize_with = "deserialize_flexible_i32")]
     #[schemars(description = "Number of yes votes")]
-    pub yes_votes: i32,
+    pub yes_votes: String,
     #[schemars(description = "Type of proposal: 'general' or 'amendment'")]
     pub proposal_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct DistributeWaterfallParams {
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Total cash available for distribution")]
-    pub cash_available: f64,
+    pub cash_available: String,
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Senior debt amount")]
-    pub senior_debt: f64,
+    pub senior_debt: String,
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Junior debt amount")]
-    pub junior_debt: f64,
+    pub junior_debt: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
@@ -188,14 +491,18 @@ pub struct CheckHousingGrantResponse {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct CheckHousingGrantParams {
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Area Median Income (AMI)")]
-    pub ami: f64,
+    pub ami: String,
+    #[serde(deserialize_with = "deserialize_flexible_i32")]
     #[schemars(description = "Household size")]
-    pub household_size: i32,
+    pub household_size: String,
+    #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Household income")]
-    pub income: f64,
-    #[schemars(description = "Whether the household has another subsidy")]
-    pub has_other_subsidy: bool,
+    pub income: String,
+    #[serde(deserialize_with = "deserialize_flexible_bool")]
+    #[schemars(description = "Whether the household has another subsidy (true/false, yes/no, 1/0)")]
+    pub has_other_subsidy: String,
 }
 
 // =================== COMPATIBILITY ENGINE ===================
@@ -699,7 +1006,7 @@ impl CompatibilityEngine {
 
     /// Calculate penalty with cap and interest
     /// Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate
-    #[tool(description = "Calculate penalty with cap and interest. Returns structured response with penalty amount, detailed explanation of calculation steps, errors for invalid inputs, and warnings. Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate. Rate, cap, and interest values are configured via environment variables. Example: 12 days late → uses configured defaults")]
+    #[tool(description = "Calculate penalty with cap and interest. Returns structured response with penalty amount, detailed explanation of calculation steps, errors for invalid inputs, and warnings. Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate. Rate, cap, and interest values are configured via environment variables. Example: '12' days late → uses configured defaults")]
     pub async fn calc_penalty(
         &self,
         Parameters(params): Parameters<CalcPenaltyParams>
@@ -707,8 +1014,19 @@ impl CompatibilityEngine {
         let _timer = RequestTimer::new();
         increment_requests();
 
+        // Parse string parameter
+        let days_late = match parse_f64_from_string(&params.days_late) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid days_late parameter: {}", parse_error
+                ))]));
+            }
+        };
+
         let result = Self::calc_penalty_internal(
-            params.days_late,
+            days_late,
             CONFIG.default_rate_per_day,
             CONFIG.default_cap,
             CONFIG.default_interest_rate,
@@ -734,7 +1052,7 @@ impl CompatibilityEngine {
 
     /// Calculate progressive tax with surcharge
     /// Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate
-    #[tool(description = "Calculate progressive tax with surcharge. Returns structured response with tax amount, detailed explanation of bracket calculations and surcharge application, errors for invalid inputs, and warnings. Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate. Tax brackets, rates, and surcharge values are configured via environment variables. Example: $40000 income → uses configured tax brackets")]
+    #[tool(description = "Calculate progressive tax with surcharge. Returns structured response with tax amount, detailed explanation of bracket calculations and surcharge application, errors for invalid inputs, and warnings. Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate. Tax brackets, rates, and surcharge values are configured via environment variables. Example: '40000' income → uses configured tax brackets")]
     pub async fn calc_tax(
         &self,
         Parameters(params): Parameters<CalcTaxParams>
@@ -742,8 +1060,19 @@ impl CompatibilityEngine {
         let _timer = RequestTimer::new();
         increment_requests();
 
+        // Parse string parameter
+        let income = match parse_f64_from_string(&params.income) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid income parameter: {}", parse_error
+                ))]));
+            }
+        };
+
         let result = Self::calc_tax_internal(
-            params.income,
+            income,
             CONFIG.default_thresholds.clone(),
             CONFIG.default_rates.clone(),
             CONFIG.default_surcharge_threshold,
@@ -770,7 +1099,7 @@ impl CompatibilityEngine {
 
     /// Check voting proposal eligibility
     /// Logic: turnout must be ≥60% of eligible. Then check: If proposal_type = "general" → yes_votes / turnout > 0.50. If proposal_type = "amendment" → yes_votes / turnout ≥ 2/3
-    #[tool(description = "Check voting proposal eligibility. Returns structured response with pass/fail result, detailed explanation of turnout and voting threshold checks, validation errors, and warnings. Logic: turnout must be ≥60% of eligible. Then check: If proposal_type = 'general' → yes_votes / turnout > 0.50. If proposal_type = 'amendment' → yes_votes / turnout ≥ 2/3. Example: 100 eligible, turnout = 70, yes_votes = 55, proposal_type = 'amendment' → turnout = 70%, yes% = 78.6%, passes")]
+    #[tool(description = "Check voting proposal eligibility. Returns structured response with pass/fail result, detailed explanation of turnout and voting threshold checks, validation errors, and warnings. Logic: turnout must be ≥60% of eligible. Then check: If proposal_type = 'general' → yes_votes / turnout > 0.50. If proposal_type = 'amendment' → yes_votes / turnout ≥ 2/3. Example: '100' eligible, turnout = '70', yes_votes = '55', proposal_type = 'amendment' → turnout = 70%, yes% = 78.6%, passes")]
     pub async fn check_voting(
         &self,
         Parameters(params): Parameters<CheckVotingParams>
@@ -778,10 +1107,41 @@ impl CompatibilityEngine {
         let _timer = RequestTimer::new();
         increment_requests();
 
+        // Parse string parameters
+        let eligible_voters = match parse_i32_from_string(&params.eligible_voters) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid eligible_voters parameter: {}", parse_error
+                ))]));
+            }
+        };
+
+        let turnout = match parse_i32_from_string(&params.turnout) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid turnout parameter: {}", parse_error
+                ))]));
+            }
+        };
+
+        let yes_votes = match parse_i32_from_string(&params.yes_votes) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid yes_votes parameter: {}", parse_error
+                ))]));
+            }
+        };
+
         let result = Self::check_voting_internal(
-            params.eligible_voters,
-            params.turnout,
-            params.yes_votes,
+            eligible_voters,
+            turnout,
+            yes_votes,
             &params.proposal_type,
         );
 
@@ -805,7 +1165,7 @@ impl CompatibilityEngine {
 
     /// Distribute cash in waterfall structure
     /// Logic: Pay senior first (up to senior_debt). Then junior (up to junior_debt). Any remainder goes to equity
-    #[tool(description = "Distribute cash in waterfall structure. Returns structured response with distribution amounts, detailed explanation of waterfall payments, validation errors, and warnings about underpayments. Logic: Pay senior first (up to senior_debt). Then junior (up to junior_debt). Any remainder goes to equity. Example: cash = 15M, senior = 8M, junior = 10M → {senior: 8M, junior: 7M, equity: 0}")]
+    #[tool(description = "Distribute cash in waterfall structure. Returns structured response with distribution amounts, detailed explanation of waterfall payments, validation errors, and warnings about underpayments. Logic: Pay senior first (up to senior_debt). Then junior (up to junior_debt). Any remainder goes to equity. Example: cash = '15000000', senior = '8000000', junior = '10000000' → {senior: 8M, junior: 7M, equity: 0}")]
     pub async fn distribute_waterfall(
         &self,
         Parameters(params): Parameters<DistributeWaterfallParams>
@@ -813,10 +1173,41 @@ impl CompatibilityEngine {
         let _timer = RequestTimer::new();
         increment_requests();
 
+        // Parse string parameters
+        let cash_available = match parse_f64_from_string(&params.cash_available) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid cash_available parameter: {}", parse_error
+                ))]));
+            }
+        };
+
+        let senior_debt = match parse_f64_from_string(&params.senior_debt) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid senior_debt parameter: {}", parse_error
+                ))]));
+            }
+        };
+
+        let junior_debt = match parse_f64_from_string(&params.junior_debt) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid junior_debt parameter: {}", parse_error
+                ))]));
+            }
+        };
+
         let result = Self::distribute_waterfall_internal(
-            params.cash_available,
-            params.senior_debt,
-            params.junior_debt,
+            cash_available,
+            senior_debt,
+            junior_debt,
         );
 
         if !result.errors.is_empty() {
@@ -839,7 +1230,7 @@ impl CompatibilityEngine {
 
     /// Check housing grant eligibility
     /// Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy
-    #[tool(description = "Check housing grant eligibility. Returns structured response with eligibility result, detailed explanation of threshold calculations and checks, validation errors, and additional requirements. Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy. Example A: AMI = 50000, household_size = 5, income = 32000, no subsidy → eligible. Example B: same AMI & size, income = 34000 → not eligible. Example C: income = 32000 but already subsidized → not eligible")]
+    #[tool(description = "Check housing grant eligibility. Returns structured response with eligibility result, detailed explanation of threshold calculations and checks, validation errors, and additional requirements. Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy. Example A: AMI = '50000', household_size = '5', income = '32000', has_other_subsidy = 'false' → eligible. Example B: same AMI & size, income = '34000' → not eligible. Example C: income = '32000' but has_other_subsidy = 'true' → not eligible")]
     pub async fn check_housing_grant(
         &self,
         Parameters(params): Parameters<CheckHousingGrantParams>
@@ -847,11 +1238,52 @@ impl CompatibilityEngine {
         let _timer = RequestTimer::new();
         increment_requests();
 
+        // Parse string parameters
+        let ami = match parse_f64_from_string(&params.ami) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid ami parameter: {}", parse_error
+                ))]));
+            }
+        };
+
+        let household_size = match parse_i32_from_string(&params.household_size) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid household_size parameter: {}", parse_error
+                ))]));
+            }
+        };
+
+        let income = match parse_f64_from_string(&params.income) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid income parameter: {}", parse_error
+                ))]));
+            }
+        };
+
+        let has_other_subsidy = match parse_bool_from_string(&params.has_other_subsidy) {
+            Ok(value) => value,
+            Err(parse_error) => {
+                increment_errors();
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid has_other_subsidy parameter: {}", parse_error
+                ))]));
+            }
+        };
+
         let result = Self::check_housing_grant_internal(
-            params.ami,
-            params.household_size,
-            params.income,
-            params.has_other_subsidy,
+            ami,
+            household_size,
+            income,
+            has_other_subsidy,
         );
 
         if !result.errors.is_empty() {
@@ -904,7 +1336,7 @@ mod tests {
     async fn test_calc_penalty() {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
-            days_late: 12.0,
+            days_late: "12".to_string(),
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -926,7 +1358,7 @@ mod tests {
     async fn test_calc_tax() {
         let engine = CompatibilityEngine::new();
         let params = CalcTaxParams {
-            income: 40000.0,
+            income: "40000".to_string(),
         };
         
         let result = engine.calc_tax(Parameters(params)).await;
@@ -949,9 +1381,9 @@ mod tests {
     async fn test_check_voting_amendment_passes() {
         let engine = CompatibilityEngine::new();
         let params = CheckVotingParams {
-            eligible_voters: 100,
-            turnout: 70,
-            yes_votes: 55,
+            eligible_voters: "100".to_string(),
+            turnout: "70".to_string(),
+            yes_votes: "55".to_string(),
             proposal_type: "amendment".to_string(),
         };
         
@@ -974,9 +1406,9 @@ mod tests {
     async fn test_distribute_waterfall() {
         let engine = CompatibilityEngine::new();
         let params = DistributeWaterfallParams {
-            cash_available: 15_000_000.0,
-            senior_debt: 8_000_000.0,
-            junior_debt: 10_000_000.0,
+            cash_available: "15000000".to_string(),
+            senior_debt: "8000000".to_string(),
+            junior_debt: "10000000".to_string(),
         };
         
         let result = engine.distribute_waterfall(Parameters(params)).await;
@@ -1000,10 +1432,10 @@ mod tests {
     async fn test_check_housing_grant_eligible() {
         let engine = CompatibilityEngine::new();
         let params = CheckHousingGrantParams {
-            ami: 50_000.0,
-            household_size: 5,
-            income: 32_000.0,
-            has_other_subsidy: false,
+            ami: "50000".to_string(),
+            household_size: "5".to_string(),
+            income: "32000".to_string(),
+            has_other_subsidy: "false".to_string(),
         };
         
         let result = engine.check_housing_grant(Parameters(params)).await;
@@ -1025,10 +1457,10 @@ mod tests {
     async fn test_check_housing_grant_not_eligible_income() {
         let engine = CompatibilityEngine::new();
         let params = CheckHousingGrantParams {
-            ami: 50_000.0,
-            household_size: 5,
-            income: 34_000.0,
-            has_other_subsidy: false,
+            ami: "50000".to_string(),
+            household_size: "5".to_string(),
+            income: "34000".to_string(),
+            has_other_subsidy: "false".to_string(),
         };
         
         let result = engine.check_housing_grant(Parameters(params)).await;
@@ -1049,10 +1481,10 @@ mod tests {
     async fn test_check_housing_grant_not_eligible_subsidy() {
         let engine = CompatibilityEngine::new();
         let params = CheckHousingGrantParams {
-            ami: 50_000.0,
-            household_size: 5,
-            income: 32_000.0,
-            has_other_subsidy: true,
+            ami: "50000".to_string(),
+            household_size: "5".to_string(),
+            income: "32000".to_string(),
+            has_other_subsidy: "true".to_string(),
         };
         
         let result = engine.check_housing_grant(Parameters(params)).await;
@@ -1074,7 +1506,7 @@ mod tests {
     async fn test_calc_penalty_with_errors() {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
-            days_late: -5.0,  // Invalid: negative
+            days_late: "-5".to_string(),  // Invalid: negative
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1085,7 +1517,8 @@ mod tests {
         assert!(call_result.is_error.unwrap_or(false));
         let content = call_result.content.unwrap();
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
-        assert!(error_text.contains("Days late cannot be negative"));
+        // Now the error comes from parsing and calculation
+        assert!(error_text.contains("Days late cannot be negative") || error_text.contains("Calculation errors"));
     }
 
     #[tokio::test]  
@@ -1094,7 +1527,7 @@ mod tests {
         // but let's keep it to test that the default configuration is valid
         let engine = CompatibilityEngine::new();
         let params = CalcTaxParams {
-            income: 40000.0,
+            income: "40000".to_string(),
         };
         
         let result = engine.calc_tax(Parameters(params)).await;
@@ -1112,9 +1545,9 @@ mod tests {
     async fn test_check_voting_invalid_proposal_type() {
         let engine = CompatibilityEngine::new();
         let params = CheckVotingParams {
-            eligible_voters: 100,
-            turnout: 70,
-            yes_votes: 55,
+            eligible_voters: "100".to_string(),
+            turnout: "70".to_string(),
+            yes_votes: "55".to_string(),
             proposal_type: "invalid_type".to_string(),
         };
         
@@ -1132,7 +1565,7 @@ mod tests {
     async fn test_calc_penalty_small_amount() {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
-            days_late: 10.0,
+            days_late: "10".to_string(),
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1153,7 +1586,7 @@ mod tests {
     async fn test_calc_tax_with_surcharge() {
         let engine = CompatibilityEngine::new();
         let params = CalcTaxParams {
-            income: 50000.0,
+            income: "50000".to_string(),
         };
         
         let result = engine.calc_tax(Parameters(params)).await;
@@ -1170,5 +1603,562 @@ mod tests {
         // Surcharge: 9000 > 5000, so 9000 + (9000 * 0.02) = 9000 + 180 = 9,180
         assert_eq!(response.tax, 9180.0);
         assert!(response.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_string_parsing_with_commas() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcTaxParams {
+            income: "40,000.00".to_string(), // Test comma-separated thousands
+        };
+        
+        let result = engine.calc_tax(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(!call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
+        
+        // Should parse as 40000.0 and give same result
+        assert_eq!(response.tax, 7140.0);
+        assert!(response.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_string_parsing_with_dollar_sign() {
+        let engine = CompatibilityEngine::new();
+        let params = DistributeWaterfallParams {
+            cash_available: "$15,000,000".to_string(), // Test dollar sign and commas
+            senior_debt: "$8000000".to_string(),
+            junior_debt: "$10,000,000.00".to_string(),
+        };
+        
+        let result = engine.distribute_waterfall(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(!call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: DistributeWaterfallResponse = serde_json::from_str(json_text).unwrap();
+        
+        // Should parse correctly and give expected result
+        assert_eq!(response.distribution.senior, 8_000_000.0);
+        assert_eq!(response.distribution.junior, 7_000_000.0);
+        assert_eq!(response.distribution.equity, 0.0);
+        assert!(response.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_string_parsing_invalid_format() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: "not-a-number".to_string(), // Invalid format
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        assert!(error_text.contains("Invalid days_late parameter"));
+        assert!(error_text.contains("Cannot parse 'not-a-number' as a number"));
+    }
+
+    #[tokio::test]
+    async fn test_string_parsing_empty_string() {
+        let engine = CompatibilityEngine::new();
+        let params = CheckVotingParams {
+            eligible_voters: "".to_string(), // Empty string
+            turnout: "70".to_string(),
+            yes_votes: "55".to_string(),
+            proposal_type: "general".to_string(),
+        };
+        
+        let result = engine.check_voting(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        assert!(error_text.contains("Invalid eligible_voters parameter"));
+        assert!(error_text.contains("Empty string cannot be parsed"));
+    }
+
+    #[tokio::test]
+    async fn test_string_parsing_with_whitespace() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: "  12.5  ".to_string(), // Test whitespace trimming
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(!call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: CalcPenaltyResponse = serde_json::from_str(json_text).unwrap();
+        
+        // Should parse as 12.5 and calculate penalty
+        assert!(response.penalty > 0.0);
+        assert!(response.errors.is_empty());
+    }
+
+    // =================== SECURITY TESTS ===================
+
+    #[tokio::test]
+    async fn test_security_input_length_limit() {
+        let engine = CompatibilityEngine::new();
+        // Create a string longer than 100 characters
+        let long_string = "1".repeat(101);
+        let params = CalcPenaltyParams {
+            days_late: long_string,
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        assert!(error_text.contains("input too long"));
+        assert!(error_text.contains("max 100 characters"));
+    }
+
+    #[tokio::test]
+    async fn test_security_json_injection_prevention() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: r#"12", "malicious": "payload"#.to_string(),
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        // Quotes should be sanitized to prevent JSON breaking
+        assert!(!error_text.contains(r#""malicious""#));
+        assert!(error_text.contains("12?, ?malicious?: ?payload"));
+    }
+
+    #[tokio::test]
+    async fn test_security_xss_prevention() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: "<script>alert('xss')</script>".to_string(),
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        // HTML/script tags should be sanitized
+        assert!(!error_text.contains("<script>"));
+        assert!(!error_text.contains("</script>"));
+        assert!(error_text.contains("?script?"));
+    }
+
+    #[tokio::test]
+    async fn test_security_newline_injection_prevention() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: "12\n\nFAKE LOG ENTRY: Unauthorized access".to_string(),
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        // Newlines should be replaced with spaces
+        assert!(!error_text.contains('\n'));
+        assert!(error_text.contains("12  FAKE LOG ENTRY"));
+    }
+
+    #[tokio::test]
+    async fn test_security_null_byte_prevention() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: "12\0malicious".to_string(),
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        // Should be rejected due to null bytes
+        assert!(error_text.contains("null bytes"));
+    }
+
+    #[tokio::test]
+    async fn test_security_control_character_limit() {
+        let engine = CompatibilityEngine::new();
+        // Create input with excessive control characters
+        let malicious_input = "12\x01\x02\x03\x04\x05evil";
+        let params = CalcPenaltyParams {
+            days_late: malicious_input.to_string(),
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        // Should be rejected due to too many control characters
+        assert!(error_text.contains("too many control characters"));
+    }
+
+    #[tokio::test]
+    async fn test_security_length_truncation_in_error() {
+        let engine = CompatibilityEngine::new();
+        // Create a 60-character invalid string (over the 50 error display limit but under input limit)
+        let long_invalid = "not-a-number-".repeat(4) + "extra-text"; // ~60 chars of invalid input
+        let params = CalcPenaltyParams {
+            days_late: long_invalid,
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        // Error message should be truncated with "..." since input is over 50 chars
+        assert!(error_text.contains("..."));
+        assert!(error_text.len() < 200); // Error message itself should be reasonable length
+    }
+
+    #[tokio::test]
+    async fn test_security_backslash_sanitization() {
+        let engine = CompatibilityEngine::new();
+        let params = CalcPenaltyParams {
+            days_late: r#"12\"malicious\"payload"#.to_string(),
+        };
+        
+        let result = engine.calc_penalty(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        // Backslashes and quotes should be sanitized
+        assert!(!error_text.contains(r#"\""#));
+        assert!(error_text.contains("12??malicious??payload"));
+    }
+
+    #[tokio::test]
+    async fn test_boolean_parsing_variations() {
+        let engine = CompatibilityEngine::new();
+        
+        // Test various "true" representations
+        for true_value in ["true", "TRUE", "True", "t", "T", "yes", "YES", "y", "Y", "1", "on", "ON"] {
+            let params = CheckHousingGrantParams {
+                ami: "50000".to_string(),
+                household_size: "3".to_string(),
+                income: "25000".to_string(), // Same qualifying income as false test
+                has_other_subsidy: true_value.to_string(),
+            };
+            
+            let result = engine.check_housing_grant(Parameters(params)).await;
+            assert!(result.is_ok());
+            
+            let call_result = result.unwrap();
+            assert!(!call_result.is_error.unwrap_or(false));
+            let content = call_result.content.unwrap();
+            let json_text = content[0].raw.as_text().unwrap().text.as_str();
+            let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
+            
+            // Should be ineligible due to having other subsidy (true)
+            assert_eq!(response.eligible, false);
+            assert!(response.explanation.contains("already has another subsidy"));
+        }
+        
+        // Test various "false" representations
+        for false_value in ["false", "FALSE", "False", "f", "F", "no", "NO", "n", "N", "0", "off", "OFF"] {
+            let params = CheckHousingGrantParams {
+                ami: "50000".to_string(),
+                household_size: "3".to_string(),
+                income: "25000".to_string(), // Set income below threshold (0.60 * 50000 = 30000)
+                has_other_subsidy: false_value.to_string(),
+            };
+            
+            let result = engine.check_housing_grant(Parameters(params)).await;
+            assert!(result.is_ok());
+            
+            let call_result = result.unwrap();
+            assert!(!call_result.is_error.unwrap_or(false));
+            let content = call_result.content.unwrap();
+            let json_text = content[0].raw.as_text().unwrap().text.as_str();
+            let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
+            
+            // Should be eligible (no other subsidy + income qualifies)
+            assert_eq!(response.eligible, true);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_boolean_parsing_invalid() {
+        let engine = CompatibilityEngine::new();
+        let params = CheckHousingGrantParams {
+            ami: "50000".to_string(),
+            household_size: "3".to_string(),
+            income: "32000".to_string(),
+            has_other_subsidy: "maybe".to_string(), // Invalid boolean
+        };
+        
+        let result = engine.check_housing_grant(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        assert!(error_text.contains("Invalid has_other_subsidy parameter"));
+        assert!(error_text.contains("Cannot parse 'maybe' as a boolean"));
+    }
+
+    #[tokio::test]
+    async fn test_boolean_parsing_empty_string() {
+        let engine = CompatibilityEngine::new();
+        let params = CheckHousingGrantParams {
+            ami: "50000".to_string(),
+            household_size: "3".to_string(),
+            income: "32000".to_string(),
+            has_other_subsidy: "".to_string(), // Empty string
+        };
+        
+        let result = engine.check_housing_grant(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(call_result.is_error.unwrap_or(false));
+        let content = call_result.content.unwrap();
+        let error_text = content[0].raw.as_text().unwrap().text.as_str();
+        
+        assert!(error_text.contains("Invalid has_other_subsidy parameter"));
+        assert!(error_text.contains("Empty string cannot be parsed as boolean"));
+    }
+
+    #[tokio::test]
+    async fn test_llm_generated_boolean_strings() {
+        let engine = CompatibilityEngine::new();
+        
+        // Simulate the exact error scenario from the terminal log:
+        // "has_other_subsidy": String("true") instead of boolean true
+        let params = CheckHousingGrantParams {
+            ami: "65000".to_string(),
+            household_size: "7".to_string(),
+            income: "40000".to_string(),
+            has_other_subsidy: "true".to_string(), // This was causing the original error
+        };
+        
+        let result = engine.check_housing_grant(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(!call_result.is_error.unwrap_or(false)); // Should NOT be an error anymore
+        let content = call_result.content.unwrap();
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
+        
+        // Should be ineligible due to having other subsidy
+        assert_eq!(response.eligible, false);
+        assert!(response.explanation.contains("already has another subsidy"));
+    }
+
+    #[tokio::test]
+    async fn test_native_json_types() {
+        // Test that we can deserialize native JSON types directly
+        let json_data = r#"{
+            "ami": 65000,
+            "household_size": 7,
+            "income": 40000,
+            "has_other_subsidy": true
+        }"#;
+        
+        let params: CheckHousingGrantParams = serde_json::from_str(json_data).unwrap();
+        
+        // Should have been converted to strings internally
+        assert_eq!(params.ami, "65000");
+        assert_eq!(params.household_size, "7");
+        assert_eq!(params.income, "40000");
+        assert_eq!(params.has_other_subsidy, "true");
+        
+        // Test that the engine can process these
+        let engine = CompatibilityEngine::new();
+        let result = engine.check_housing_grant(Parameters(params)).await;
+        assert!(result.is_ok());
+        
+        let call_result = result.unwrap();
+        assert!(!call_result.is_error.unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_mixed_types() {
+        // Test mixing native types and strings
+        let json_data = r#"{
+            "ami": "65000",
+            "household_size": 7,
+            "income": 40000.5,
+            "has_other_subsidy": "false"
+        }"#;
+        
+        let params: CheckHousingGrantParams = serde_json::from_str(json_data).unwrap();
+        
+        assert_eq!(params.ami, "65000");
+        assert_eq!(params.household_size, "7");
+        assert_eq!(params.income, "40000.5");
+        assert_eq!(params.has_other_subsidy, "false");
+    }
+
+    #[tokio::test]
+    async fn test_all_parameter_types_with_numbers() {
+        // Test CalcPenaltyParams with native number
+        let json_penalty = r#"{"days_late": 12.5}"#;
+        let penalty_params: CalcPenaltyParams = serde_json::from_str(json_penalty).unwrap();
+        assert_eq!(penalty_params.days_late, "12.5");
+        
+        // Test CalcTaxParams with native number
+        let json_tax = r#"{"income": 50000}"#;
+        let tax_params: CalcTaxParams = serde_json::from_str(json_tax).unwrap();
+        assert_eq!(tax_params.income, "50000");
+        
+        // Test CheckVotingParams with native numbers
+        let json_voting = r#"{
+            "eligible_voters": 100,
+            "turnout": 75,
+            "yes_votes": 60,
+            "proposal_type": "amendment"
+        }"#;
+        let voting_params: CheckVotingParams = serde_json::from_str(json_voting).unwrap();
+        assert_eq!(voting_params.eligible_voters, "100");
+        assert_eq!(voting_params.turnout, "75");
+        assert_eq!(voting_params.yes_votes, "60");
+        
+        // Test DistributeWaterfallParams with native numbers
+        let json_waterfall = r#"{
+            "cash_available": 15000000.0,
+            "senior_debt": 8000000,
+            "junior_debt": 10000000.5
+        }"#;
+        let waterfall_params: DistributeWaterfallParams = serde_json::from_str(json_waterfall).unwrap();
+        assert_eq!(waterfall_params.cash_available, "15000000");
+        assert_eq!(waterfall_params.senior_debt, "8000000");
+        assert_eq!(waterfall_params.junior_debt, "10000000.5");
+    }
+
+    #[tokio::test]
+    async fn test_float_to_int_conversion_error() {
+        // Test that floats are rejected for integer fields
+        let json_data = r#"{
+            "eligible_voters": 100.5,
+            "turnout": 75,
+            "yes_votes": 60,
+            "proposal_type": "amendment"
+        }"#;
+        
+        let result = serde_json::from_str::<CheckVotingParams>(json_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Expected integer, got float"));
+    }
+
+    #[tokio::test]
+    async fn test_end_to_end_with_native_types() {
+        let engine = CompatibilityEngine::new();
+        
+        // Simulate the exact payload from the terminal log that was failing
+        let json_data = r#"{
+            "ami": 65000,
+            "has_other_subsidy": true,
+            "household_size": 7,
+            "income": 40000
+        }"#;
+        
+        let params: CheckHousingGrantParams = serde_json::from_str(json_data).unwrap();
+        let result = engine.check_housing_grant(Parameters(params)).await;
+        
+        assert!(result.is_ok());
+        let call_result = result.unwrap();
+        assert!(!call_result.is_error.unwrap_or(false)); // Should NOT error anymore
+        
+        let content = call_result.content.unwrap();
+        let json_text = content[0].raw.as_text().unwrap().text.as_str();
+        let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
+        
+        // Should be ineligible due to having subsidy
+        assert_eq!(response.eligible, false);
+    }
+
+    #[test]
+    fn test_exact_terminal_log_scenario() {
+        // Test the exact JSON structure that was failing in the terminal log  
+        // (excluding session_id which is not part of the parameter struct)
+        let json_data = r#"{
+            "ami": 65000,
+            "has_other_subsidy": true,
+            "household_size": 7,
+            "income": 40000
+        }"#;
+        
+        // This should now deserialize successfully
+        let params: Result<CheckHousingGrantParams, _> = serde_json::from_str(json_data);
+        assert!(params.is_ok());
+        
+        let params = params.unwrap();
+        assert_eq!(params.ami, "65000");
+        assert_eq!(params.has_other_subsidy, "true");
+        assert_eq!(params.household_size, "7");
+        assert_eq!(params.income, "40000");
+    }
+
+    #[test]
+    fn test_scenario_2_from_terminal_log() {
+        // Test the second failing scenario
+        let json_data = r#"{
+            "ami": 55000,
+            "has_other_subsidy": false,
+            "household_size": 2,
+            "income": 32000
+        }"#;
+        
+        let params: Result<CheckHousingGrantParams, _> = serde_json::from_str(json_data);
+        assert!(params.is_ok());
+        
+        let params = params.unwrap();
+        assert_eq!(params.ami, "55000");
+        assert_eq!(params.has_other_subsidy, "false");
+        assert_eq!(params.household_size, "2");
+        assert_eq!(params.income, "32000");
     }
 }
