@@ -45,7 +45,7 @@ test-sse: build-sse
 test-mcp: build-mcp
 	@echo "🧪 Testing MCP server..."
 	@echo ""
-	RUST_LOG=debug ./target/release/mcp_server
+	RUST_LOG=debug BIND_ADDRESS=0.0.0.0:8002 ./target/release/mcp_server
 	
 clean:
 	rm -f *.dxt *.zip
