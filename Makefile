@@ -21,7 +21,7 @@ build-all: build-mcp build-sse build-stdio
 pack: build-stdio
 	@echo "Packing MCP server for Claude Desktop..."
 	chmod +x ./target/release/stdio_server
-	zip -rX eligibility-engine-mcp-server.dxt -j dxt/manifest.json ./target/release/stdio_server
+	zip -rX compatibility-engine-mcp-server.dxt -j dxt/manifest.json ./target/release/stdio_server
 
 # Build image
 image-build:
