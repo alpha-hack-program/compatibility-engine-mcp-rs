@@ -1,5 +1,6 @@
 /target
-*.dxt
+*.mcpb
+*.mcpb
 *.log
 *.tmp
 *.bak

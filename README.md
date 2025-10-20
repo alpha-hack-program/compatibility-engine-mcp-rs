@@ -49,7 +49,7 @@ So they decided to use agents and in order to provide tools to the agents in a s
 - **Explicit Logic**: No external dependencies - all logic is transparent and verifiable
 - **Robust Input Validation**: Demonstrates JSON schema validation with detailed error handling
 - **Containerization**: Example Podman setup for deployment
-- **Claude Desktop Integration**: Example DXT packaging for MCP integration
+- **Claude Desktop Integration**: Example MCPB packaging for MCP integration
 - **Professional Version Management**: Automated version sync with cargo-release
 - **CI/CD Pipeline**: Comprehensive GitHub Actions workflow
 - **Clean Repository Structure**: Organized scripts and clean project layout
@@ -248,14 +248,14 @@ Congratulations your Compatibility tool is ready to be used by an MCP enabled ag
 ### Packaging
 
 ```bash
-# Create DXT package for Claude Desktop
+# Create MCPB package for Claude Desktop
 $ make pack
 cargo build --release --bin stdio_server
    Compiling compatibility-engine-mcp-server v1.0.8 (/Users/.../compatibility-engine-mcp-rs)
     Finished `release` profile [optimized] target(s) in 18.23s
 Packing MCP server for Claude Desktop...
 chmod +x ./target/release/stdio_server
-zip -rX compatibility-engine-mcp-server.dxt -j dxt/manifest.json ./target/release/stdio_server
+zip -rX compatibility-engine-mcp-server.mcpb -j mcpb/manifest.json ./target/release/stdio_server
 updating: manifest.json (deflated 49%)
 updating: stdio_server (deflated 63%)
 ```
@@ -268,7 +268,7 @@ Open Claude Desktop and go to `Settings->Extensions` dropping area.
 
 > **Note**: This demonstrates MCP integration patterns and is not intended for production use with real data.
 
-Drag and drop the `DXT` file.
+Drag and drop the `MCPB` file.
 
 ![Install extension](./images/claude-desktop-1.png)
 
@@ -418,7 +418,7 @@ make help                   # Show all available commands
 ├── scripts/                               # Utility scripts
 │   ├── sync-manifest-version.sh           # Version sync for cargo-release
 │   └── image.sh                          # Container management script
-├── dxt/
+├── mcpb/
 │   └── manifest.json                      # Claude Desktop manifest
 ├── .github/workflows/                     # CI/CD pipelines
 │   └── ci.yml                            # GitHub Actions workflow
@@ -528,7 +528,7 @@ sign-tag = false
 ### 🔄 Version Sync System
 
 - **Single Source of Truth**: `Cargo.toml` version controls everything
-- **Automatic Sync**: Updates `dxt/manifest.json` and `.env` automatically
+- **Automatic Sync**: Updates `mcpb/manifest.json` and `.env` automatically
 - **Git Integration**: Creates commits and tags automatically
 
 ### 📦 Release Workflow

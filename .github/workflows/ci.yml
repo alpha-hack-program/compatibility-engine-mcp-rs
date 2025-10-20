@@ -57,15 +57,15 @@ jobs:
           echo "📦 Testing make pack..."
           make pack
           
-          # Check that a DXT file was created (find any .dxt file)
-          DXT_FILE=$(ls *.dxt 2>/dev/null | head -1)
-          if [ -z "$DXT_FILE" ]; then
-            echo "❌ No .dxt file found"
+          # Check that a MCPB file was created (find any .mcpb file)
+          MCPB_FILE=$(ls *.mcpb 2>/dev/null | head -1)
+          if [ -z "$MCPB_FILE" ]; then
+            echo "❌ No .mcpb file found"
             echo "Files in directory:"
             ls -la
             exit 1
           fi
-          echo "✅ Found DXT file: $DXT_FILE"
+          echo "✅ Found MCPB file: $MCPB_FILE"
           
           # Install unzip if not available (should be available in ubuntu-latest)
           if ! command -v unzip &> /dev/null; then
@@ -76,7 +76,7 @@ jobs:
           # Extract the package using unzip
           echo "📂 Extracting package with unzip..."
           mkdir -p test-extract
-          unzip -q "$DXT_FILE" -d test-extract
+          unzip -q "$MCPB_FILE" -d test-extract
           
           # Show extracted contents for debugging
           echo "📁 Extracted contents:"
@@ -190,7 +190,7 @@ jobs:
         with:
           name: build-artifacts
           path: |
-            *.dxt
+            *.mcpb
             target/release/stdio_server
             target/release/sse_server
             target/release/mcp_server
