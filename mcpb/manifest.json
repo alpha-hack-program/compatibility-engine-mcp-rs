@@ -2,7 +2,7 @@
   "dxt_version": "0.1",
   "name": "compatibility-engine-mcp-server",
   "display_name": "Compatibility Engine MCP Server",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Compatibility Engine MCP Server with 5 calculation functions",
   "author": {
     "name": "Carlos Vicens"
