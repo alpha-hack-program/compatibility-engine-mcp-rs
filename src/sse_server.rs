@@ -33,8 +33,10 @@ async fn main() -> anyhow::Result<()> {
 
     let (sse_server, mut router) = SseServer::new(config);
 
-    // Add metrics endpoint
-    router = router.route("/metrics", axum::routing::get(metrics_handler));
+    // Add endpoints for metrics and health
+    router = router
+        .route("/metrics", axum::routing::get(metrics_handler))
+        .route("/health", axum::routing::get(health_handler));
 
     let listener = tokio::net::TcpListener::bind(sse_server.config.bind).await?;
 
@@ -61,5 +63,11 @@ async fn main() -> anyhow::Result<()> {
 /// Handler for the /metrics endpoint
 async fn metrics_handler() -> impl IntoResponse {
     let output = metrics::METRICS.gather();
+    (StatusCode::OK, output)
+}
+
+/// Handler for the /health endpoint
+async fn health_handler() -> impl IntoResponse {
+    let output = "OK";
     (StatusCode::OK, output)
 }

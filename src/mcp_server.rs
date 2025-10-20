@@ -33,7 +33,9 @@ async fn main() -> anyhow::Result<()> {
 
     let router = axum::Router::new()
         .nest_service("/mcp", service)
-        .route("/metrics", axum::routing::get(metrics_handler));
+        .route("/metrics", axum::routing::get(metrics_handler))
+        .route("/health", axum::routing::get(health_handler));
+    
     let tcp_listener = tokio::net::TcpListener::bind(bind_address).await?;
     let _ = axum::serve(tcp_listener, router)
         .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.unwrap() })
@@ -44,5 +46,11 @@ async fn main() -> anyhow::Result<()> {
 /// Handler for the /metrics endpoint
 async fn metrics_handler() -> impl IntoResponse {
     let output = metrics::METRICS.gather();
+    (StatusCode::OK, output)
+}
+
+/// Handler for the /health endpoint
+async fn health_handler() -> impl IntoResponse {
+    let output = "OK";
     (StatusCode::OK, output)
 }
