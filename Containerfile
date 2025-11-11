@@ -3,7 +3,7 @@
 # Build arguments
 ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal
 ARG BASE_TAG=9.6
-ARG VERSION=1.3.2
+ARG VERSION=1.3.3
 ARG MAINTAINER="Alpha Hack Group <alpha@github.com>"
 ARG DESCRIPTION="Compatibility Engine MCP Server - Model Context Protocol server to check benefits"
 ARG APP_NAME=compatibility-engine-mcp-rs
