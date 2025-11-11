@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Pre-release hook for cargo-release
-# Syncs the version from Cargo.toml to mcpb/manifest.json and .env
+# Syncs the version from Cargo.toml to mcpb/manifest.json, .env, and Containerfile
 # Also updates Rust source code with .env values
 
 set -e  # Exit on any error
 
-echo "🔄 Syncing version from Cargo.toml to mcpb/manifest.json, .env, and Rust source..."
+echo "🔄 Syncing version from Cargo.toml to mcpb/manifest.json, .env, Containerfile, and Rust source..."
 
 # Get version from Cargo.toml using cargo metadata
 if command -v jq &> /dev/null; then
@@ -135,6 +135,8 @@ APP_NAME=$(read_env_var "APP_NAME" "ERROR_APP_NAME")
 ENV_VERSION=$(read_env_var "VERSION" "$VERSION")  # Use VERSION from Cargo.toml as fallback
 TITLE=$(read_env_var "TITLE" "ERROR_TITLE")
 SOURCE=$(read_env_var "SOURCE" "ERROR_SOURCE")
+# DESCRIPTION: use from .env if available, otherwise construct from TITLE
+DESCRIPTION=$(read_env_var "DESCRIPTION" "${TITLE} - Model Context Protocol server")
 
 echo "📋 .env values:"
 echo "   APP_NAME: $APP_NAME"
@@ -142,6 +144,7 @@ echo "   VERSION: $ENV_VERSION"
 echo "   TITLE: $TITLE"
 echo "   ENGINE_NAME: $ENGINE_NAME"
 echo "   SOURCE: $SOURCE"
+echo "   DESCRIPTION: $DESCRIPTION"
 
 # Check if ENGINE_NAME is valid
 if [ "$ENGINE_NAME" == "ERROR_ENGINE_NAME" ]; then
@@ -165,6 +168,38 @@ fi
 if [ "$SOURCE" == "ERROR_SOURCE" ]; then
     echo "❌ Error: SOURCE is not set in .env!"
     exit 1
+fi
+
+# DESCRIPTION is optional - if not in .env, it will be constructed from TITLE
+
+# Update Containerfile with VERSION, APP_NAME, SOURCE, and DESCRIPTION from .env
+if [ -f "Containerfile" ]; then
+    # Escape special characters for sed (using | as delimiter, so we need to escape | and \)
+    # Function to escape sed special characters when using | as delimiter
+    escape_sed() {
+        echo "$1" | sed 's/\\/\\\\/g' | sed 's/|/\\|/g'
+    }
+    
+    ESCAPED_APP_NAME=$(escape_sed "$APP_NAME")
+    ESCAPED_SOURCE=$(escape_sed "$SOURCE")
+    ESCAPED_DESCRIPTION=$(escape_sed "$DESCRIPTION")
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS sed syntax - use | as delimiter to avoid conflicts with / in URLs
+        sed -i '' "s|^ARG VERSION=.*|ARG VERSION=$ENV_VERSION|" Containerfile
+        sed -i '' "s|^ARG APP_NAME=.*|ARG APP_NAME=$ESCAPED_APP_NAME|" Containerfile
+        sed -i '' "s|^ARG SOURCE=.*|ARG SOURCE=$ESCAPED_SOURCE|" Containerfile
+        sed -i '' "s|^ARG DESCRIPTION=.*|ARG DESCRIPTION=\"$ESCAPED_DESCRIPTION\"|" Containerfile
+    else
+        # Linux sed syntax - use | as delimiter to avoid conflicts with / in URLs
+        sed -i "s|^ARG VERSION=.*|ARG VERSION=$ENV_VERSION|" Containerfile
+        sed -i "s|^ARG APP_NAME=.*|ARG APP_NAME=$ESCAPED_APP_NAME|" Containerfile
+        sed -i "s|^ARG SOURCE=.*|ARG SOURCE=$ESCAPED_SOURCE|" Containerfile
+        sed -i "s|^ARG DESCRIPTION=.*|ARG DESCRIPTION=\"$ESCAPED_DESCRIPTION\"|" Containerfile
+    fi
+    echo "✅ Updated Containerfile with VERSION=$ENV_VERSION, APP_NAME=$APP_NAME, SOURCE=$SOURCE, DESCRIPTION=$DESCRIPTION"
+else
+    echo "⚠️  Containerfile not found - skipping"
 fi
 
 # ENGINE_NAME must replace '-' with '_' in the Rust source code

@@ -3,12 +3,12 @@
 # Build arguments
 ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal
 ARG BASE_TAG=9.6
-ARG VERSION=1.0.2
+ARG VERSION=1.3.2
 ARG MAINTAINER="Alpha Hack Group <alpha@github.com>"
-ARG DESCRIPTION="Eligibility Engine MCP Server - Model Context Protocol server for eligibility evaluation"
-ARG APP_NAME=eligibility-engine-mcp-server
+ARG DESCRIPTION="Compatibility Engine MCP Server - Model Context Protocol server to check benefits"
+ARG APP_NAME=compatibility-engine-mcp-rs
 ARG PORT=8001
-ARG SOURCE=https://github.com/alpha-hack-program/eligibility-engine-mcp-rs.git
+ARG SOURCE=https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git
 
 # Multi-stage build
 # Stage 1: Build stage with Rust toolchain
@@ -73,7 +73,7 @@ LABEL org.opencontainers.image.title="${APP_NAME}" \
       org.opencontainers.image.documentation="${SOURCE}" \
       io.k8s.description="${DESCRIPTION}" \
       io.k8s.display-name="${APP_NAME}" \
-      io.openshift.tags="mcp,eligibility-engine,rust,server" \
+      io.openshift.tags="mcp,compatibility-engine,rust,server" \
       maintainer="${MAINTAINER}"
 
 # Install runtime dependencies
@@ -86,7 +86,7 @@ RUN microdnf update -y && \
 
 # Create non-root user for security
 RUN useradd -r -u 1001 -g 0 -s /sbin/nologin \
-    -c "Eligibility Engine MCP Server user" mcpserver
+    -c "Compatibility Engine MCP Server user" mcpserver
 
 # Set working directory
 WORKDIR /app
