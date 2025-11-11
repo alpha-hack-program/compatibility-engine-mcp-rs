@@ -7,10 +7,11 @@ use super::metrics::{increment_requests, increment_errors, RequestTimer};
 
 use rmcp::{
     ServerHandler,
-    handler::server::{router::tool::ToolRouter, tool::Parameters},
+    handler::server::router::tool::ToolRouter,
+    handler::server::wrapper::Parameters,
     model::{ServerCapabilities, ServerInfo, CallToolResult, Content},
     ErrorData as McpError,
-    schemars, tool, tool_handler, tool_router,
+    schemars, tool, tool_handler, tool_router
 };
 
 // =================== CONFIGURATION ===================
@@ -1308,6 +1309,12 @@ impl CompatibilityEngine {
 #[tool_handler]
 impl ServerHandler for CompatibilityEngine {
     fn get_info(&self) -> ServerInfo {
+        // Read basic information from .env file (replaced by sync script during release)
+        let name = "compatibility-engine-mcp-rs".to_string();
+        let version = "1.3.1".to_string();
+        let title = "Compatibility Engine MCP Server".to_string();
+        let website_url = "https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git".to_string();
+
         ServerInfo {
             instructions: Some(
                 "Compatibility Engine providing five calculation and eligibility functions:\
@@ -1320,8 +1327,11 @@ impl ServerHandler for CompatibilityEngine {
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: rmcp::model::Implementation {
-                name: "compatibility-engine".to_string(),
-                version: "1.0.0".to_string(),
+                name: name,
+                version: version, 
+                title: Some(title), 
+                icons: None, 
+                website_url: Some(website_url) 
             },
             ..Default::default()
         }
@@ -1343,7 +1353,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcPenaltyResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1365,7 +1375,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1391,7 +1401,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckVotingResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1415,7 +1425,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: DistributeWaterfallResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1442,7 +1452,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1467,7 +1477,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1491,7 +1501,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1515,7 +1525,7 @@ mod tests {
         let call_result = result.unwrap();
         // Should be an error response due to invalid input
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         // Now the error comes from parsing and calculation
         assert!(error_text.contains("Days late cannot be negative") || error_text.contains("Calculation errors"));
@@ -1535,7 +1545,7 @@ mod tests {
         let call_result = result.unwrap();
         // Should succeed since we use valid default configuration
         assert!(!call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
         assert!(response.errors.is_empty());
@@ -1556,7 +1566,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         assert!(error_text.contains("Invalid proposal type"));
     }
@@ -1572,7 +1582,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcPenaltyResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1593,7 +1603,7 @@ mod tests {
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1617,7 +1627,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(!call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcTaxResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1640,7 +1650,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(!call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: DistributeWaterfallResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1663,7 +1673,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         assert!(error_text.contains("Invalid days_late parameter"));
         assert!(error_text.contains("Cannot parse 'not-a-number' as a number"));
@@ -1684,7 +1694,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         assert!(error_text.contains("Invalid eligible_voters parameter"));
         assert!(error_text.contains("Empty string cannot be parsed"));
@@ -1702,7 +1712,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(!call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CalcPenaltyResponse = serde_json::from_str(json_text).unwrap();
         
@@ -1727,7 +1737,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         assert!(error_text.contains("input too long"));
         assert!(error_text.contains("max 100 characters"));
@@ -1745,7 +1755,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         // Quotes should be sanitized to prevent JSON breaking
@@ -1765,7 +1775,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         // HTML/script tags should be sanitized
@@ -1786,7 +1796,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         // Newlines should be replaced with spaces
@@ -1806,7 +1816,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         // Should be rejected due to null bytes
@@ -1827,7 +1837,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         // Should be rejected due to too many control characters
@@ -1848,7 +1858,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         // Error message should be truncated with "..." since input is over 50 chars
@@ -1868,7 +1878,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         // Backslashes and quotes should be sanitized
@@ -1894,7 +1904,7 @@ mod tests {
             
             let call_result = result.unwrap();
             assert!(!call_result.is_error.unwrap_or(false));
-            let content = call_result.content.unwrap();
+            let content = call_result.content;
             let json_text = content[0].raw.as_text().unwrap().text.as_str();
             let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
             
@@ -1917,7 +1927,7 @@ mod tests {
             
             let call_result = result.unwrap();
             assert!(!call_result.is_error.unwrap_or(false));
-            let content = call_result.content.unwrap();
+            let content = call_result.content;
             let json_text = content[0].raw.as_text().unwrap().text.as_str();
             let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
             
@@ -1941,7 +1951,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         assert!(error_text.contains("Invalid has_other_subsidy parameter"));
@@ -1963,7 +1973,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(call_result.is_error.unwrap_or(false));
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let error_text = content[0].raw.as_text().unwrap().text.as_str();
         
         assert!(error_text.contains("Invalid has_other_subsidy parameter"));
@@ -1988,7 +1998,7 @@ mod tests {
         
         let call_result = result.unwrap();
         assert!(!call_result.is_error.unwrap_or(false)); // Should NOT be an error anymore
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
         
@@ -2112,7 +2122,7 @@ mod tests {
         let call_result = result.unwrap();
         assert!(!call_result.is_error.unwrap_or(false)); // Should NOT error anymore
         
-        let content = call_result.content.unwrap();
+        let content = call_result.content;
         let json_text = content[0].raw.as_text().unwrap().text.as_str();
         let response: CheckHousingGrantResponse = serde_json::from_str(json_text).unwrap();
         

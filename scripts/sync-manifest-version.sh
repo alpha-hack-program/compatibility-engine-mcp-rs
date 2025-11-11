@@ -2,10 +2,11 @@
 
 # Pre-release hook for cargo-release
 # Syncs the version from Cargo.toml to mcpb/manifest.json and .env
+# Also updates Rust source code with .env values
 
 set -e  # Exit on any error
 
-echo "🔄 Syncing version from Cargo.toml to mcpb/manifest.json and .env..."
+echo "🔄 Syncing version from Cargo.toml to mcpb/manifest.json, .env, and Rust source..."
 
 # Get version from Cargo.toml using cargo metadata
 if command -v jq &> /dev/null; then
@@ -57,9 +58,144 @@ if [ -f ".env" ]; then
         echo "✅ Added VERSION=$VERSION to .env"
     fi
 else
-    # Create new .env file
-    echo "VERSION=$VERSION" > .env
-    echo "✅ Created .env with VERSION=$VERSION"
+    # Throw an error
+    echo "❌ Error: .env file not found!"
+    exit 1
+fi
+
+# Read values from .env file for Rust source replacement
+echo "🔧 Reading .env values for Rust source code replacement..."
+
+# Function to expand variable references in a value
+expand_vars() {
+    local value=$1
+    local visited_vars="${2:-}"  # Track visited variables to prevent circular dependencies
+    local expanded=$value
+    
+    # Find all ${VAR} patterns in the value
+    while [[ $expanded =~ \$\{([^}]+)\} ]]; do
+        local var_ref="${BASH_REMATCH[1]}"
+        local var_value
+        
+        # Check for circular dependency
+        if [[ "$visited_vars" =~ ":$var_ref:" ]]; then
+            echo "Warning: Circular dependency detected for variable $var_ref" >&2
+            break
+        fi
+        
+        # Read the variable value from .env
+        if [ -f ".env" ]; then
+            var_value=$(grep "^${var_ref}=" .env | cut -d'=' -f2- | sed 's/^"//' | sed 's/"$//')
+        fi
+        
+        # If variable not found in .env, try environment variables
+        if [ -z "$var_value" ]; then
+            var_value="${!var_ref:-}"
+        fi
+        
+        # If still empty, leave the reference as-is
+        if [ -z "$var_value" ]; then
+            break
+        fi
+        
+        # Recursively expand the variable value
+        local new_visited="${visited_vars}:${var_ref}:"
+        var_value=$(expand_vars "$var_value" "$new_visited")
+        
+        # Replace the reference with the expanded value
+        expanded=${expanded//\$\{$var_ref\}/$var_value}
+    done
+    
+    echo "$expanded"
+}
+
+# Function to read .env variables
+read_env_var() {
+    local var_name=$1
+    local default_value=$2
+    local value
+    
+    if [ -f ".env" ]; then
+        value=$(grep "^${var_name}=" .env | cut -d'=' -f2- | sed 's/^"//' | sed 's/"$//')
+    fi
+    
+    if [ -z "$value" ]; then
+        value=$default_value
+    else
+        # Expand variable references in the value
+        value=$(expand_vars "$value")
+    fi
+    
+    echo "$value"
+}
+
+# Get values from .env
+ENGINE_NAME=$(read_env_var "ENGINE_NAME" "ERROR_ENGINE_NAME")
+APP_NAME=$(read_env_var "APP_NAME" "ERROR_APP_NAME")
+ENV_VERSION=$(read_env_var "VERSION" "$VERSION")  # Use VERSION from Cargo.toml as fallback
+TITLE=$(read_env_var "TITLE" "ERROR_TITLE")
+SOURCE=$(read_env_var "SOURCE" "ERROR_SOURCE")
+
+echo "📋 .env values:"
+echo "   APP_NAME: $APP_NAME"
+echo "   VERSION: $ENV_VERSION" 
+echo "   TITLE: $TITLE"
+echo "   ENGINE_NAME: $ENGINE_NAME"
+echo "   SOURCE: $SOURCE"
+
+# Check if ENGINE_NAME is valid
+if [ "$ENGINE_NAME" == "ERROR_ENGINE_NAME" ]; then
+    echo "❌ Error: ENGINE_NAME is not set in .env!"
+    exit 1
+fi
+
+# Check if APP_NAME is valid
+if [ "$APP_NAME" == "ERROR_APP_NAME" ]; then
+    echo "❌ Error: APP_NAME is not set in .env!"
+    exit 1
+fi
+
+# Check if TITLE is valid
+if [ "$TITLE" == "ERROR_TITLE" ]; then
+    echo "❌ Error: TITLE is not set in .env!"
+    exit 1
+fi
+
+# Check if SOURCE is valid
+if [ "$SOURCE" == "ERROR_SOURCE" ]; then
+    echo "❌ Error: SOURCE is not set in .env!"
+    exit 1
+fi
+
+# ENGINE_NAME must replace '-' with '_' in the Rust source code
+ENGINE_NAME=$(echo "$ENGINE_NAME" | tr '-' '_')
+
+# Update Rust source code
+RUST_FILE="src/common/${ENGINE_NAME}.rs"
+if [ -f "$RUST_FILE" ]; then
+    echo "🦀 Updating Rust source code with .env values..."
+    
+    # Create a backup
+    cp "$RUST_FILE" "$RUST_FILE.bak"
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS sed syntax - use | as delimiter to avoid conflicts with / in URLs
+        sed -i '' "s|let name = \"[^\"]*\"\.to_string();|let name = \"$APP_NAME\".to_string();|" "$RUST_FILE"
+        sed -i '' "s|let version = \"[^\"]*\"\.to_string();|let version = \"$ENV_VERSION\".to_string();|" "$RUST_FILE"
+        sed -i '' "s|let title = \"[^\"]*\"\.to_string();|let title = \"$TITLE\".to_string();|" "$RUST_FILE"
+        sed -i '' "s|let website_url = \"[^\"]*\"\.to_string();|let website_url = \"$SOURCE\".to_string();|" "$RUST_FILE"
+    else
+        # Linux sed syntax - use | as delimiter to avoid conflicts with / in URLs
+        sed -i "s|let name = \"[^\"]*\"\.to_string();|let name = \"$APP_NAME\".to_string();|" "$RUST_FILE"
+        sed -i "s|let version = \"[^\"]*\"\.to_string();|let version = \"$ENV_VERSION\".to_string();|" "$RUST_FILE"
+        sed -i "s|let title = \"[^\"]*\"\.to_string();|let title = \"$TITLE\".to_string();|" "$RUST_FILE"
+        sed -i "s|let website_url = \"[^\"]*\"\.to_string();|let website_url = \"$SOURCE\".to_string();|" "$RUST_FILE"
+    fi
+    
+    echo "✅ Updated $RUST_FILE with .env values"
+    echo "💾 Backup saved as $RUST_FILE.bak"
+else
+    echo "⚠️  $RUST_FILE not found - skipping Rust source update"
 fi
 
 echo "🎉 Version sync complete!"
