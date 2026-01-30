@@ -44,7 +44,7 @@ RUN cargo fetch
 COPY src/ ./src
 
 # Build the application
-RUN cargo build --release --bin sse_server
+RUN cargo build --release --bin mcp_server
 
 # Stage 2: Runtime stage with minimal UBI
 FROM ${BASE_IMAGE}:${BASE_TAG}
@@ -92,12 +92,12 @@ RUN useradd -r -u 1001 -g 0 -s /sbin/nologin \
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /build/target/release/sse_server /app/sse_server
+COPY --from=builder /build/target/release/mcp_server /app/mcp_server
 
 # Set permissions
 RUN chown -R 1001:0 /app && \
     chmod -R g=u /app && \
-    chmod +x /app/sse_server
+    chmod +x /app/mcp_server
 
 # Switch to non-root user
 USER 1001
