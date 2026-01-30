@@ -7,7 +7,7 @@ ARG VERSION=2.0.0
 ARG MAINTAINER="Alpha Hack Group <alpha@github.com>"
 ARG DESCRIPTION="Compatibility Engine MCP Server - Model Context Protocol server to check benefits"
 ARG APP_NAME=compatibility-engine-mcp-rs
-ARG PORT=8001
+ARG PORT=8000
 ARG SOURCE=https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git
 
 # Multi-stage build
