@@ -1,6 +1,6 @@
-use rmcp::transport::streamable_http_server::{
+use rmcp::transport::{StreamableHttpServerConfig, streamable_http_server::{
     StreamableHttpService, session::local::LocalSessionManager,
-};
+}};
 use tracing_subscriber::{
     layer::SubscriberExt,
     util::SubscriberInitExt,
@@ -25,10 +25,14 @@ async fn main() -> anyhow::Result<()> {
     // Use environment variable or the static value
     let bind_address = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| BIND_ADDRESS.to_string());
     tracing::info!("Starting streamable-http Compatibility Engine MCP server on {}", bind_address);
+
     let service = StreamableHttpService::new(
         || Ok(CompatibilityEngine::new()),
         LocalSessionManager::default().into(),
-        Default::default(),
+        StreamableHttpServerConfig {
+            sse_retry: None,
+            ..Default::default()
+        },
     );
 
     let router = axum::Router::new()
