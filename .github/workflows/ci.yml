@@ -192,7 +192,6 @@ jobs:
           path: |
             *.mcpb
             target/release/stdio_server
-            target/release/sse_server
             target/release/mcp_server
           retention-days: 7
 

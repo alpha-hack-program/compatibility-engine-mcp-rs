@@ -115,4 +115,4 @@ ENV RUST_BACKTRACE=1
 ENV PORT=${PORT}
 
 # Run the application
-CMD ["/app/sse_server"]
+CMD ["/app/mcp_server"]

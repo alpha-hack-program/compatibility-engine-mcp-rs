@@ -59,7 +59,6 @@ So they decided to use agents and in order to provide tools to the agents in a s
 | Task | Command | Description |
 |------|---------|-------------|
 | **🧪 Test** | `make test` | Run all tests |
-| **🧪 Test SSE** | `make test-sse` | Run MCP server with SSE transport |
 | **🧪 Test MCP** | `make test-mcp` | Run MCP server with Streamable HTTP transport |
 | **🚀 Release** | `make release-patch` | Create new patch release |
 | **📦 Package** | `make pack` | Create Claude Desktop package |
@@ -159,8 +158,7 @@ cd compatibility-engine-mcp-rs
 make build-all
 
 # Or build individually
-make build-sse      # SSE Server
-make build-mcp      # MCP HTTP Server
+make build-mcp      # MCP Streamable HTTP Server
 make build-stdio    # STDIO Server for Claude
 ```
 
@@ -175,27 +173,24 @@ make test
 
 > **NOTE:**
 >
-> By default `BIND_ADDRESS=127.0.0.1:8000` for **SSE** and `BIND_ADDRESS=127.0.0.1:8001` for **Streamable HTTP**
+> By default `BIND_ADDRESS=127.0.0.1:8000` for **Streamable HTTP**
 >
-> BUT in the *Makefile* both `test-sse` and `test-mcp` targets set `BIND_ADDRESS=0.0.0.0:8001`
+> BUT in the *Makefile* `test-mcp` targets set `BIND_ADDRESS=0.0.0.0:8001`
 
 ```bash
-# SSE Server (recommended for Llama Stack, being deprecated in MCP Standard)
-make test-sse
-
 # MCP Streamable HTTP Server
 make test-mcp
 
 # Or directly
-RUST_LOG=info BIND_ADDRESS=127.0.0.1:8002 ./target/release/sse_server
+RUST_LOG=info BIND_ADDRESS=127.0.0.1:8002 ./target/release/mcp_server
 ```
 
 ### 🧪 Testing With MCP Inspector
 
-Let's run the MCP server with SSE transport in one terminal:
+Let's run the MCP server with Streamable HTTP transport in one terminal:
 
 ```bash
-make test-sse
+make test-mcp
 ```
 
 Run MCP inspector with `make inspector`:
@@ -221,8 +216,8 @@ Open a browser and point to the URL with the token pre-filled.
 ![MCP Inspector](./images/mcp-inspector-1.png)
 
 Make sure:
-- **Transport Type:** `SSE`
-- **URL:** `http://localhost:8002/sse`
+- **Transport Type:** `Streamable HTTP`
+- **URL:** `http://localhost:8002/mcp`
 
 Then click `connect`.
 

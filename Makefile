@@ -6,16 +6,12 @@ all: build-all
 build-mcp:
 	cargo build --release --bin mcp_server
 
-# Build SSE server (sse)
-build-sse:
-	cargo build --release --bin sse_server
-
 # Build stdio server (stdio)
 build-stdio:
 	cargo build --release --bin stdio_server
 
 # Build all servers
-build-all: build-mcp build-sse build-stdio
+build-all: build-mcp build-stdio
 
 # Pack MCP server for Claude Desktop
 pack: build-stdio
