@@ -2,9 +2,9 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [ workshop ]
   pull_request:
-    branches: [ main ]
+    branches: [ workshop ]
   workflow_dispatch:
 
 env:
@@ -12,7 +12,7 @@ env:
 
 jobs:
   test:
-    name: Test Compatibility Engine MCP Server
+    name: Test Penalty Engine MCP Server
     runs-on: ubuntu-latest
     
     steps:
@@ -146,7 +146,7 @@ jobs:
           echo "Checking with $CONTAINER_RUNTIME:"
           $CONTAINER_RUNTIME images || echo "$CONTAINER_RUNTIME images command failed"
           
-          if $CONTAINER_RUNTIME images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "compatibility-engine-mcp"; then
+          if $CONTAINER_RUNTIME images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "penalty-engine-mcp"; then
             echo "✅ Found image with $CONTAINER_RUNTIME"
             FOUND=true
           fi
@@ -156,7 +156,7 @@ jobs:
             echo "Checking with Docker as fallback:"
             docker images || echo "Docker images command failed"
             
-            if docker images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "compatibility-engine-mcp"; then
+            if docker images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "penalty-engine-mcp"; then
               echo "✅ Found image with Docker"
               FOUND=true
             fi
@@ -167,7 +167,7 @@ jobs:
             echo "Checking with Podman as fallback:"
             podman images || echo "Podman images command failed"
             
-            if podman images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "compatibility-engine-mcp"; then
+            if podman images --format "table {{.Repository}}:{{.Tag}}" 2>/dev/null | grep -q "penalty-engine-mcp"; then
               echo "✅ Found image with Podman"
               FOUND=true
             fi
@@ -226,12 +226,12 @@ jobs:
       #     REGISTRY=${{ secrets.CONTAINER_REGISTRY }}
           
       #     # Application details (production build)
-      #     APP_NAME=compatibility-engine-mcp-server
+      #     APP_NAME=penalty-engine-mcp-server
       #     MAINTAINER="Alpha Hack Group <alpha@github.com>"
-      #     DESCRIPTION="Compatibility Engine MCP Server - Model Context Protocol server for compatibility evaluation"
+      #     DESCRIPTION="Penalty Engine MCP Server - Model Context Protocol server for penalty calculation"
       #     VERSION=${GITHUB_SHA::8}
       #     PORT=8001
-      #     SOURCE=https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git
+      #     SOURCE=https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git#workshop
           
       #     # Base image configuration
       #     BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal

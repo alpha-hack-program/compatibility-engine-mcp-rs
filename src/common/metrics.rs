@@ -19,21 +19,21 @@ impl CompatibilityMetrics {
         let requests_total = Counter::with_opts(
             Opts::new(
                 "compatibility_requests_total",
-                "Total number of compatibility engine calculation requests"
+                "Total number of penalty engine calculation requests"
             )
         ).unwrap();
 
         let errors_total = Counter::with_opts(
             Opts::new(
                 "compatibility_errors_total",
-                "Total number of errors in compatibility engine calculations"
+                "Total number of errors in penalty engine calculations"
             )
         ).unwrap();
 
         let request_duration = Histogram::with_opts(
             HistogramOpts::new(
                 "compatibility_request_duration_seconds",
-                "Duration of compatibility engine calculation requests in seconds"
+                "Duration of penalty engine calculation requests in seconds"
             )
             .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0])
         ).unwrap();
@@ -41,7 +41,7 @@ impl CompatibilityMetrics {
         let active_requests = Gauge::with_opts(
             Opts::new(
                 "compatibility_active_requests",
-                "Number of active compatibility engine calculation requests"
+                "Number of active penalty engine calculation requests"
             )
         ).unwrap();
 

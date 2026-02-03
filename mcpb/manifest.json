@@ -1,9 +1,9 @@
 {
   "dxt_version": "0.1",
   "name": "compatibility-engine-mcp-server",
-  "display_name": "Compatibility Engine MCP Server",
+  "display_name": "Penalty Engine MCP Server",
   "version": "2.0.2",
-  "description": "Compatibility Engine MCP Server with 5 calculation functions",
+  "description": "Penalty Engine MCP Server with a penalty calculation function",
   "author": {
     "name": "Carlos Vicens"
   },

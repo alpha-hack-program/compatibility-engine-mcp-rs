@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Use environment variable or the static value
     let bind_address = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| BIND_ADDRESS.to_string());
-    tracing::info!("Starting streamable-http Compatibility Engine MCP server on {}", bind_address);
+    tracing::info!("Starting streamable-http Penalty Engine MCP server on {}", bind_address);
 
     let service = StreamableHttpService::new(
         || Ok(CompatibilityEngine::new()),
