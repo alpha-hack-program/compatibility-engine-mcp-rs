@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
         .with_ansi(false)
         .init();
 
-    tracing::info!("Starting Compatibility Engine MCP server using stdio transport");
+    tracing::info!("Starting Penalty Engine MCP server using stdio transport");
 
     // Create an instance of our compatibility-engine router
     let service = CompatibilityEngine::new().serve(stdio()).await.inspect_err(|e| {

@@ -5,10 +5,10 @@ ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal
 ARG BASE_TAG=9.6
 ARG VERSION=2.0.2
 ARG MAINTAINER="Alpha Hack Group <alpha@github.com>"
-ARG DESCRIPTION="Compatibility Engine MCP Server - Model Context Protocol server to check benefits"
-ARG APP_NAME=compatibility-engine-mcp-rs
+ARG DESCRIPTION="Penalty Engine MCP Server - Model Context Protocol server to calculate penalties"
+ARG APP_NAME=penalty-engine-mcp-rs
 ARG PORT=8000
-ARG SOURCE=https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git
+ARG SOURCE=https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git#workshop
 
 # Multi-stage build
 # Stage 1: Build stage with Rust toolchain
@@ -86,7 +86,7 @@ RUN microdnf update -y && \
 
 # Create non-root user for security
 RUN useradd -r -u 1001 -g 0 -s /sbin/nologin \
-    -c "Compatibility Engine MCP Server user" mcpserver
+    -c "Penalty Engine MCP Server user" mcpserver
 
 # Set working directory
 WORKDIR /app
