@@ -382,6 +382,29 @@ pub struct CalcPenaltyParams {
     #[serde(deserialize_with = "deserialize_flexible_f64")]
     #[schemars(description = "Number of days late")]
     pub days_late: String,
+    /// Optional. If not provided, uses configured default (e.g. ENGINE_DEFAULT_RATE_PER_DAY).
+    #[serde(default)]
+    #[schemars(description = "Optional rate per day; uses default if omitted")]
+    pub rate_per_day: Option<String>,
+    /// Optional. If not provided, uses configured default (e.g. ENGINE_DEFAULT_CAP).
+    #[serde(default)]
+    #[schemars(description = "Optional cap; uses default if omitted")]
+    pub cap: Option<String>,
+    /// Optional. If not provided, uses configured default (e.g. ENGINE_DEFAULT_INTEREST_RATE).
+    #[serde(default)]
+    #[schemars(description = "Optional interest rate; uses default if omitted")]
+    pub interest_rate: Option<String>,
+}
+
+impl Default for CalcPenaltyParams {
+    fn default() -> Self {
+        Self {
+            days_late: String::new(),
+            rate_per_day: None,
+            cap: None,
+            interest_rate: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
@@ -555,10 +578,10 @@ impl CompatibilityEngine {
         // Apply cap
         let penalty = base_penalty.min(cap);
         if base_penalty > cap {
-            explanation_parts.push(format!("Applied cap: {:.2} capped at {:.2}", base_penalty, cap));
+            explanation_parts.push(format!("Applied cap on base penalty: {:.2} capped at {:.2}", base_penalty, cap));
             warnings.push(format!("Base penalty {:.2} exceeded cap of {:.2}", base_penalty, cap));
         } else {
-            explanation_parts.push(format!("No cap applied ({:.2} ≤ {:.2})", base_penalty, cap));
+            explanation_parts.push(format!("No cap applied on base penalty ({:.2} ≤ {:.2})", base_penalty, cap));
         }
         
         // Calculate interest
@@ -1026,11 +1049,46 @@ impl CompatibilityEngine {
             }
         };
 
+        let mut invalid_optional_parameters = Vec::new();
+        let rate_per_day = match params.rate_per_day.as_ref() {
+            None => CONFIG.default_rate_per_day,
+            Some(s) => match parse_f64_from_string(s) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Invalid rate_per_day parameter: {e:?}");
+                    invalid_optional_parameters.push("rate_per_day");
+                    CONFIG.default_rate_per_day
+                }
+            }
+        };
+        let cap = match params.cap.as_ref() {
+            None => CONFIG.default_cap,
+            Some(s) => match parse_f64_from_string(s) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Invalid cap parameter: {e:?}");
+                    invalid_optional_parameters.push("cap");
+                    CONFIG.default_cap
+                }
+            }
+        };
+        let interest_rate = match params.interest_rate.as_ref() {
+            None => CONFIG.default_interest_rate,
+            Some(s) => match parse_f64_from_string(s) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Invalid interest_rate parameter: {e:?}");
+                    invalid_optional_parameters.push("interest_rate");
+                    CONFIG.default_interest_rate
+                }
+            }
+        };
+
         let result = Self::calc_penalty_internal(
             days_late,
-            CONFIG.default_rate_per_day,
-            CONFIG.default_cap,
-            CONFIG.default_interest_rate,
+            rate_per_day,
+            cap,
+            interest_rate,
         );
 
         if !result.errors.is_empty() {
@@ -1041,12 +1099,21 @@ impl CompatibilityEngine {
         }
 
         match serde_json::to_string_pretty(&result) {
-            Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+            Ok(json_str) => {
+                let content = Content::text(json_str);
+                if !invalid_optional_parameters.is_empty() {
+                    // Format a string with the content a section warning that the following parameters were invalid:
+                    let warning_string = format!("The following parameters were invalid: {} and used the default value: {}", invalid_optional_parameters.join(", "), CONFIG.default_rate_per_day);
+                    Ok(CallToolResult::success(vec![content, Content::text(warning_string)]))
+                } else {
+                    Ok(CallToolResult::success(vec![content]))
+                }
+            },
             Err(e) => {
                 increment_errors();
-                Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(CallToolResult::error(vec![Content::text(format!(
                     "Error serializing response: {}", e
-                ))]))
+                ))]));
             }
         }
     }
@@ -1327,6 +1394,7 @@ impl ServerHandler for CompatibilityEngine {
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: rmcp::model::Implementation {
+                description: Some("Compatibility Engine MCP Server with 5 calculation and eligibility functions".into()),
                 name: name,
                 version: version, 
                 title: Some(title), 
@@ -1347,6 +1415,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "12".to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1517,6 +1586,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "-5".to_string(),  // Invalid: negative
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1576,6 +1646,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "10".to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1666,6 +1737,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "not-a-number".to_string(), // Invalid format
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1705,6 +1777,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "  12.5  ".to_string(), // Test whitespace trimming
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1730,6 +1803,7 @@ mod tests {
         let long_string = "1".repeat(101);
         let params = CalcPenaltyParams {
             days_late: long_string,
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1748,6 +1822,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: r#"12", "malicious": "payload"#.to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1768,6 +1843,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "<script>alert('xss')</script>".to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1789,6 +1865,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "12\n\nFAKE LOG ENTRY: Unauthorized access".to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1809,6 +1886,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: "12\0malicious".to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1830,6 +1908,7 @@ mod tests {
         let malicious_input = "12\x01\x02\x03\x04\x05evil";
         let params = CalcPenaltyParams {
             days_late: malicious_input.to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1851,6 +1930,7 @@ mod tests {
         let long_invalid = "not-a-number-".repeat(4) + "extra-text"; // ~60 chars of invalid input
         let params = CalcPenaltyParams {
             days_late: long_invalid,
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;
@@ -1871,6 +1951,7 @@ mod tests {
         let engine = CompatibilityEngine::new();
         let params = CalcPenaltyParams {
             days_late: r#"12\"malicious\"payload"#.to_string(),
+            ..Default::default()
         };
         
         let result = engine.calc_penalty(Parameters(params)).await;

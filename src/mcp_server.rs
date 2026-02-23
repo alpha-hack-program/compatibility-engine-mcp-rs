@@ -10,7 +10,10 @@ mod common;
 use common::{compatibility_engine::CompatibilityEngine, metrics};
 use axum::{response::IntoResponse, http::StatusCode};
 
+use std::time::Duration;
+
 const BIND_ADDRESS: &str = "127.0.0.1:8001";
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -41,9 +44,25 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", axum::routing::get(health_handler));
     
     let tcp_listener = tokio::net::TcpListener::bind(bind_address).await?;
-    let _ = axum::serve(tcp_listener, router)
-        .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.unwrap() })
-        .await;
+
+    tracing::info!("Server started. Press Ctrl+C to stop.");
+
+    axum::serve(tcp_listener, router)
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Shutdown signal received, stopping server...");
+
+            // Force exit after timeout if graceful shutdown hangs
+            tokio::spawn(async {
+                tokio::time::sleep(SHUTDOWN_TIMEOUT).await;
+                tracing::warn!("Force exit after {:?} timeout", SHUTDOWN_TIMEOUT);
+                std::process::exit(0);
+            });
+        })
+        .await?;
+
+    tracing::info!("Server stopped");
+
     Ok(())
 }
 

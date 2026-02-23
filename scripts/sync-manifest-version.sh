@@ -219,12 +219,14 @@ if [ -f "$RUST_FILE" ]; then
         sed -i '' "s|let version = \"[^\"]*\"\.to_string();|let version = \"$ENV_VERSION\".to_string();|" "$RUST_FILE"
         sed -i '' "s|let title = \"[^\"]*\"\.to_string();|let title = \"$TITLE\".to_string();|" "$RUST_FILE"
         sed -i '' "s|let website_url = \"[^\"]*\"\.to_string();|let website_url = \"$SOURCE\".to_string();|" "$RUST_FILE"
+        sed -i '' "s|let description = \"[^\"]*\"\.to_string();|let description = \"$DESCRIPTION\".to_string();|" "$RUST_FILE"
     else
         # Linux sed syntax - use | as delimiter to avoid conflicts with / in URLs
         sed -i "s|let name = \"[^\"]*\"\.to_string();|let name = \"$APP_NAME\".to_string();|" "$RUST_FILE"
         sed -i "s|let version = \"[^\"]*\"\.to_string();|let version = \"$ENV_VERSION\".to_string();|" "$RUST_FILE"
         sed -i "s|let title = \"[^\"]*\"\.to_string();|let title = \"$TITLE\".to_string();|" "$RUST_FILE"
         sed -i "s|let website_url = \"[^\"]*\"\.to_string();|let website_url = \"$SOURCE\".to_string();|" "$RUST_FILE"
+        sed -i "s|let description = \"[^\"]*\"\.to_string();|let description = \"$DESCRIPTION\".to_string();|" "$RUST_FILE"
     fi
     
     echo "✅ Updated $RUST_FILE with .env values"
