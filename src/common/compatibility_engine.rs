@@ -1030,7 +1030,7 @@ impl CompatibilityEngine {
 
     /// Calculate penalty with cap and interest
     /// Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate
-    #[tool(description = "Calculate penalty with cap and interest. Returns structured response with penalty amount, detailed explanation of calculation steps, errors for invalid inputs, and warnings. Logic: penalty = min(days_late × rate_per_day, cap), then add interest = penalty × interest_rate. Rate, cap, and interest values are configured via environment variables. Example: '12' days late → uses configured defaults")]
+    #[tool(description = "Computes late-payment penalty (min of days × rate vs cap) plus interest. Returns penalty amount, explanation, errors, and warnings. Use when the user provides specific values (e.g. days late, optionally rate, cap, interest) and asks for a penalty calculation. Do NOT use for lookup questions: 'What is the penalty rate?', 'What is the cap?', 'What are the penalty rules?' — those answers come from retrieved documents. Requires days_late (numeric); rate, cap, and interest are optional.")]
     pub async fn calc_penalty(
         &self,
         Parameters(params): Parameters<CalcPenaltyParams>
@@ -1120,7 +1120,7 @@ impl CompatibilityEngine {
 
     /// Calculate progressive tax with surcharge
     /// Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate
-    #[tool(description = "Calculate progressive tax with surcharge. Returns structured response with tax amount, detailed explanation of bracket calculations and surcharge application, errors for invalid inputs, and warnings. Logic: apply progressive brackets defined by thresholds and rates. If total tax > surcharge_threshold, add surcharge = tax × surcharge_rate. Tax brackets, rates, and surcharge values are configured via environment variables. Example: '40000' income → uses configured tax brackets")]
+    #[tool(description = "Computes the tax liability and surcharge for a given taxable income using configured brackets and rates. Returns the total tax amount, per-bracket breakdown, and surcharge if applicable. Use ONLY when the user provides a specific income amount and asks for a calculated result (e.g. 'What is the tax for 90000?', 'Calculate tax liability for 35000'). Do NOT use for lookup questions: 'What is the tax rate?', 'What are the brackets?', 'What does the law say?', 'What is the surcharge threshold?' — those answers come from retrieved documents, not this tool. Requires a numeric income parameter.")]
     pub async fn calc_tax(
         &self,
         Parameters(params): Parameters<CalcTaxParams>
@@ -1167,7 +1167,7 @@ impl CompatibilityEngine {
 
     /// Check voting proposal eligibility
     /// Logic: turnout must be ≥60% of eligible. Then check: If proposal_type = "general" → yes_votes / turnout > 0.50. If proposal_type = "amendment" → yes_votes / turnout ≥ 2/3
-    #[tool(description = "Check voting proposal eligibility. Returns structured response with pass/fail result, detailed explanation of turnout and voting threshold checks, validation errors, and warnings. Logic: turnout must be ≥60% of eligible. Then check: If proposal_type = 'general' → yes_votes / turnout > 0.50. If proposal_type = 'amendment' → yes_votes / turnout ≥ 2/3. Example: '100' eligible, turnout = '70', yes_votes = '55', proposal_type = 'amendment' → turnout = 70%, yes% = 78.6%, passes")]
+    #[tool(description = "Determines whether a voting proposal passes based on turnout and yes-vote thresholds. Returns pass/fail result and explanation. Use when the user provides specific values (eligible_voters, turnout, yes_votes, proposal_type) and asks for an eligibility or pass check. Do NOT use for lookup questions: 'What is the turnout threshold?', 'What are the voting rules?' — those answers come from retrieved documents. Requires eligible_voters, turnout, yes_votes, proposal_type.")]
     pub async fn check_voting(
         &self,
         Parameters(params): Parameters<CheckVotingParams>
@@ -1233,7 +1233,7 @@ impl CompatibilityEngine {
 
     /// Distribute cash in waterfall structure
     /// Logic: Pay senior first (up to senior_debt). Then junior (up to junior_debt). Any remainder goes to equity
-    #[tool(description = "Distribute cash in waterfall structure. Returns structured response with distribution amounts, detailed explanation of waterfall payments, validation errors, and warnings about underpayments. Logic: Pay senior first (up to senior_debt). Then junior (up to junior_debt). Any remainder goes to equity. Example: cash = '15000000', senior = '8000000', junior = '10000000' → {senior: 8M, junior: 7M, equity: 0}")]
+    #[tool(description = "Distributes available cash in waterfall order (senior → junior → equity). Returns distribution amounts and explanation. Use when the user provides specific values (cash_available, senior_debt, junior_debt) and asks for a waterfall distribution. Do NOT use for lookup questions: 'What is the waterfall order?', 'How does the distribution work?' — those answers come from retrieved documents. Requires cash_available, senior_debt, junior_debt.")]
     pub async fn distribute_waterfall(
         &self,
         Parameters(params): Parameters<DistributeWaterfallParams>
@@ -1298,7 +1298,7 @@ impl CompatibilityEngine {
 
     /// Check housing grant eligibility
     /// Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy
-    #[tool(description = "Check housing grant eligibility. Returns structured response with eligibility result, detailed explanation of threshold calculations and checks, validation errors, and additional requirements. Logic: Base threshold = 0.60 × AMI. If household_size > 4, threshold = threshold × 1.10. Must satisfy income ≤ threshold. Must not have another subsidy. Example A: AMI = '50000', household_size = '5', income = '32000', has_other_subsidy = 'false' → eligible. Example B: same AMI & size, income = '34000' → not eligible. Example C: income = '32000' but has_other_subsidy = 'true' → not eligible")]
+    #[tool(description = "Determines whether a household qualifies for a housing grant based on AMI, household size, income, and subsidy status. Returns eligibility result and explanation. Use when the user provides specific values (AMI, household_size, income, has_other_subsidy) and asks for an eligibility check. Do NOT use for 'What are the eligibility rules?' or 'What is the income threshold?' — those are lookups answered from documents. Requires AMI, household_size, income, has_other_subsidy.")]
     pub async fn check_housing_grant(
         &self,
         Parameters(params): Parameters<CheckHousingGrantParams>
