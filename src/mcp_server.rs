@@ -7,8 +7,9 @@ use tracing_subscriber::{
     {self},
 };
 mod common;
-use common::{compatibility_engine::CompatibilityEngine, metrics};
+use common::{compatibility_engine::CompatibilityEngine, telemetry::Telemetry};
 use axum::{response::IntoResponse, http::StatusCode};
+use opentelemetry::global;
 
 use std::time::Duration;
 
@@ -17,10 +18,16 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let telemetry = Telemetry::install("compatibility-engine-mcp-server")?;
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "debug".to_string().into()),
+        )
+        .with(
+            tracing_opentelemetry::layer()
+                .with_tracer(global::tracer("compatibility-engine")),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -32,15 +39,11 @@ async fn main() -> anyhow::Result<()> {
     let service = StreamableHttpService::new(
         || Ok(CompatibilityEngine::new()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig {
-            sse_retry: None,
-            ..Default::default()
-        },
+        StreamableHttpServerConfig::default().with_sse_retry(None),
     );
 
     let router = axum::Router::new()
         .nest_service("/mcp", service)
-        .route("/metrics", axum::routing::get(metrics_handler))
         .route("/health", axum::routing::get(health_handler));
     
     let tcp_listener = tokio::net::TcpListener::bind(bind_address).await?;
@@ -62,14 +65,9 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     tracing::info!("Server stopped");
+    telemetry.shutdown();
 
     Ok(())
-}
-
-/// Handler for the /metrics endpoint
-async fn metrics_handler() -> impl IntoResponse {
-    let output = metrics::METRICS.gather();
-    (StatusCode::OK, output)
 }
 
 /// Handler for the /health endpoint

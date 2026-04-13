@@ -2,17 +2,27 @@ use anyhow::Result;
 
 use rmcp::{ServiceExt, transport::stdio};
 use tracing_subscriber::{self, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod common;
-use common::compatibility_engine::CompatibilityEngine;
+use common::{compatibility_engine::CompatibilityEngine, telemetry::Telemetry};
+use opentelemetry::global;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize the tracing subscriber with file and stdout logging
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
+    let telemetry = Telemetry::install("compatibility-engine-mcp-server-stdio")?;
+
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with(
+            tracing_opentelemetry::layer()
+                .with_tracer(global::tracer("compatibility-engine")),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(false),
+        )
         .init();
 
     tracing::info!("Starting Compatibility Engine MCP server using stdio transport");
@@ -23,5 +33,6 @@ async fn main() -> Result<()> {
     })?;
 
     service.waiting().await?;
+    telemetry.shutdown();
     Ok(())
 }

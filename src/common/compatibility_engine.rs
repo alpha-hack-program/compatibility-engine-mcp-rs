@@ -1,7 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::env;
 use std::fmt;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use super::metrics::{increment_requests, increment_errors, RequestTimer};
 
@@ -9,7 +9,7 @@ use rmcp::{
     ServerHandler,
     handler::server::router::tool::ToolRouter,
     handler::server::wrapper::Parameters,
-    model::{ServerCapabilities, ServerInfo, CallToolResult, Content},
+    model::{Implementation, ServerCapabilities, ServerInfo, CallToolResult, Content},
     ErrorData as McpError,
     schemars, tool, tool_handler, tool_router
 };
@@ -79,7 +79,7 @@ impl EngineConfig {
     }
 }
 
-static CONFIG: Lazy<EngineConfig> = Lazy::new(EngineConfig::from_env);
+static CONFIG: LazyLock<EngineConfig> = LazyLock::new(EngineConfig::from_env);
 
 // =================== PARSING UTILITIES ===================
 
@@ -1382,27 +1382,24 @@ impl ServerHandler for CompatibilityEngine {
         let title = "Compatibility Engine MCP Server".to_string();
         let website_url = "https://github.com/alpha-hack-program/compatibility-engine-mcp-rs.git".to_string();
 
-        ServerInfo {
-            instructions: Some(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(
                 "Compatibility Engine providing five calculation and eligibility functions:\
                  \n\n1. calc_penalty - Calculate penalty with cap and interest\
                  \n2. calc_tax - Calculate progressive tax with surcharge\
                  \n3. check_voting - Check voting proposal eligibility\
                  \n4. distribute_waterfall - Distribute cash in waterfall structure\
                  \n5. check_housing_grant - Check housing grant eligibility\
-                 \n\nAll functions are strongly typed and provide explicit calculations.".into()
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: rmcp::model::Implementation {
-                description: Some("Compatibility Engine MCP Server with 5 calculation and eligibility functions".into()),
-                name: name,
-                version: version, 
-                title: Some(title), 
-                icons: None, 
-                website_url: Some(website_url) 
-            },
-            ..Default::default()
-        }
+                 \n\nAll functions are strongly typed and provide explicit calculations.",
+            )
+            .with_server_info(
+                Implementation::new(name, version)
+                    .with_title(title)
+                    .with_description(
+                        "Compatibility Engine MCP Server with 5 calculation and eligibility functions",
+                    )
+                    .with_website_url(website_url),
+            )
     }
 }
 

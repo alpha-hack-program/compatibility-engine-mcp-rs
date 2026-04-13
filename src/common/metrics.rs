@@ -1,103 +1,97 @@
-use once_cell::sync::Lazy;
-use prometheus::{Counter, Gauge, Histogram, HistogramOpts, Opts, Registry};
+//! Engine metrics exported via the global OpenTelemetry [`MeterProvider`] (OTLP).
+//!
+//! Call [`init`] once after [`opentelemetry::global::set_meter_provider`]. If the process never
+//! calls [`init`], recording functions are no-ops so unit tests can run without telemetry setup.
 
-pub static METRICS: Lazy<CompatibilityMetrics> = Lazy::new(|| CompatibilityMetrics::new());
+use std::sync::OnceLock;
+use std::time::Instant;
 
-pub struct CompatibilityMetrics {
-    #[allow(dead_code)] // Used internally by gather() method
-    pub registry: Registry,
-    pub requests_total: Counter,
-    pub errors_total: Counter,
-    pub request_duration: Histogram,
-    pub active_requests: Gauge,
+use opentelemetry::global;
+use opentelemetry::metrics::{Counter, Histogram, UpDownCounter};
+
+struct EngineInstruments {
+    requests_total: Counter<u64>,
+    errors_total: Counter<u64>,
+    request_duration_seconds: Histogram<f64>,
+    active_requests: UpDownCounter<i64>,
 }
 
-impl CompatibilityMetrics {
-    fn new() -> Self {
-        let registry = Registry::new();
+static INSTRUMENTS: OnceLock<EngineInstruments> = OnceLock::new();
 
-        let requests_total = Counter::with_opts(
-            Opts::new(
-                "compatibility_requests_total",
-                "Total number of compatibility engine calculation requests"
+/// Registers instruments against the current global meter provider.
+///
+/// Must run exactly once, after the meter provider is installed.
+pub fn init() {
+    let meter = global::meter("compatibility_engine");
+    let instruments = EngineInstruments {
+        requests_total: meter
+            .u64_counter("compatibility.engine.requests")
+            .with_description("Total number of compatibility engine calculation requests")
+            .build(),
+        errors_total: meter
+            .u64_counter("compatibility.engine.errors")
+            .with_description("Total number of errors in compatibility engine calculations")
+            .build(),
+        request_duration_seconds: meter
+            .f64_histogram("compatibility.engine.request.duration.seconds")
+            .with_unit("s")
+            .with_description(
+                "Duration of compatibility engine calculation requests in seconds",
             )
-        ).unwrap();
-
-        let errors_total = Counter::with_opts(
-            Opts::new(
-                "compatibility_errors_total",
-                "Total number of errors in compatibility engine calculations"
-            )
-        ).unwrap();
-
-        let request_duration = Histogram::with_opts(
-            HistogramOpts::new(
-                "compatibility_request_duration_seconds",
-                "Duration of compatibility engine calculation requests in seconds"
-            )
-            .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0])
-        ).unwrap();
-
-        let active_requests = Gauge::with_opts(
-            Opts::new(
-                "compatibility_active_requests",
-                "Number of active compatibility engine calculation requests"
-            )
-        ).unwrap();
-
-        registry.register(Box::new(requests_total.clone())).unwrap();
-        registry.register(Box::new(errors_total.clone())).unwrap();
-        registry.register(Box::new(request_duration.clone())).unwrap();
-        registry.register(Box::new(active_requests.clone())).unwrap();
-
-        CompatibilityMetrics {
-            registry,
-            requests_total,
-            errors_total,
-            request_duration,
-            active_requests,
-        }
-    }
-
-    #[allow(dead_code)] // Used by HTTP metrics endpoints
-    pub fn gather(&self) -> String {
-        use prometheus::{Encoder, TextEncoder};
-        let encoder = TextEncoder::new();
-        let metric_families = self.registry.gather();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        String::from_utf8(buffer).unwrap()
+            .build(),
+        active_requests: meter
+            .i64_up_down_counter("compatibility.engine.active_requests")
+            .with_description("Number of active compatibility engine calculation requests")
+            .build(),
+    };
+    if INSTRUMENTS.set(instruments).is_err() {
+        tracing::warn!("compatibility engine metrics already initialized; ignoring duplicate init");
     }
 }
 
-/// Timer struct to automatically measure request duration and track active requests
+fn instruments() -> Option<&'static EngineInstruments> {
+    INSTRUMENTS.get()
+}
+
+/// Timer that records request duration and active request count when dropped.
 pub struct RequestTimer {
-    timer: Option<prometheus::HistogramTimer>,
+    start: Option<Instant>,
 }
 
 impl RequestTimer {
     pub fn new() -> Self {
-        METRICS.active_requests.inc();
-        let timer = METRICS.request_duration.start_timer();
-        Self { timer: Some(timer) }
+        if let Some(i) = instruments() {
+            i.active_requests.add(1, &[]);
+            Self {
+                start: Some(Instant::now()),
+            }
+        } else {
+            Self { start: None }
+        }
     }
 }
 
 impl Drop for RequestTimer {
     fn drop(&mut self) {
-        if let Some(timer) = self.timer.take() {
-            timer.observe_duration();
+        let Some(i) = instruments() else {
+            return;
+        };
+        if let Some(start) = self.start.take() {
+            i.request_duration_seconds
+                .record(start.elapsed().as_secs_f64(), &[]);
+            i.active_requests.add(-1, &[]);
         }
-        METRICS.active_requests.dec();
     }
 }
 
-/// Helper function to increment request counter
 pub fn increment_requests() {
-    METRICS.requests_total.inc();
+    if let Some(i) = instruments() {
+        i.requests_total.add(1, &[]);
+    }
 }
 
-/// Helper function to increment error counter
 pub fn increment_errors() {
-    METRICS.errors_total.inc();
+    if let Some(i) = instruments() {
+        i.errors_total.add(1, &[]);
+    }
 }
