@@ -16,6 +16,44 @@ use std::time::Duration;
 const BIND_ADDRESS: &str = "127.0.0.1:8001";
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Streamable HTTP config: rmcp defaults `allowed_hosts` to loopback only (DNS rebinding
+/// protection). Behind OpenShift Routes / Ingress, `Host` is the public hostname — add it via
+/// `MCP_ALLOWED_HOSTS` (comma-separated), or set `MCP_DISABLE_HOST_CHECK=true` only if you accept
+/// that risk (e.g. strictly internal ClusterIP with no hostile DNS).
+fn streamable_http_config() -> StreamableHttpServerConfig {
+    let disable_check = std::env::var("MCP_DISABLE_HOST_CHECK")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            matches!(v.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false);
+
+    if disable_check {
+        return StreamableHttpServerConfig::default()
+            .disable_allowed_hosts()
+            .with_sse_retry(None);
+    }
+
+    let mut cfg = StreamableHttpServerConfig::default().with_sse_retry(None);
+    if let Ok(extra) = std::env::var("MCP_ALLOWED_HOSTS") {
+        let extra_hosts: Vec<String> = extra
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !extra_hosts.is_empty() {
+            let merged: Vec<String> = cfg
+                .allowed_hosts
+                .iter()
+                .cloned()
+                .chain(extra_hosts)
+                .collect();
+            cfg = cfg.with_allowed_hosts(merged);
+        }
+    }
+    cfg
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let telemetry = Telemetry::install("compatibility-engine-mcp-server")?;
@@ -39,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
     let service = StreamableHttpService::new(
         || Ok(CompatibilityEngine::new()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_sse_retry(None),
+        streamable_http_config(),
     );
 
     let router = axum::Router::new()
