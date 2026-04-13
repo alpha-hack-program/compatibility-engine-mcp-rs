@@ -1373,7 +1373,7 @@ impl CompatibilityEngine {
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for CompatibilityEngine {
     fn get_info(&self) -> ServerInfo {
         // Read basic information from .env file (replaced by sync script during release)
