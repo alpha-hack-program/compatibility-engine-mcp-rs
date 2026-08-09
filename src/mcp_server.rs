@@ -33,11 +33,13 @@ fn streamable_http_config() -> StreamableHttpServerConfig {
         return StreamableHttpServerConfig::default()
             .disable_allowed_hosts()
             .with_sse_retry(None)
+            .with_stateful_mode(false)
             .with_json_response(true);
     }
 
     let mut cfg = StreamableHttpServerConfig::default()
         .with_sse_retry(None)
+        .with_stateful_mode(false)
         .with_json_response(true);
     if let Ok(extra) = std::env::var("MCP_ALLOWED_HOSTS") {
         let extra_hosts: Vec<String> = extra
