@@ -32,7 +32,8 @@ fn streamable_http_config() -> StreamableHttpServerConfig {
     if disable_check {
         return StreamableHttpServerConfig::default()
             .disable_allowed_hosts()
-            .with_sse_retry(None);
+            .with_sse_retry(None)
+            .with_json_response(true);
     }
 
     let mut cfg = StreamableHttpServerConfig::default()
