@@ -365,6 +365,101 @@ podman run -p 8001:8001 \
 
 
 
+## 🔑 Testing Caller Identity (JWT)
+
+When running behind an Envoy sidecar that validates Keycloak JWTs, every tool response includes `called_by` (the username) and `roles` (the caller's realm roles) extracted from the `Authorization: Bearer <token>` header.
+
+Since the server only base64-decodes the JWT payload (Envoy handles validation), you can craft a fake token for local testing.
+
+### Generate a test token
+
+The JWT header is always `{"alg":"none","typ":"JWT"}`, pre-encoded as `eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0`. Build a token by encoding your desired claims as the payload:
+
+```bash
+# Alice — with realm roles
+PAYLOAD=$(echo -n '{"preferred_username":"alice","sub":"alice-uuid","realm_access":{"roles":["mcp-server-a-user","uma_authorization","default-roles-openshell"]}}' \
+  | base64 -w0 | tr '+/' '-_' | tr -d '=')
+ALICE_TOKEN="eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.${PAYLOAD}."
+
+# Bob — different user, different roles
+PAYLOAD=$(echo -n '{"preferred_username":"bob","sub":"bob-uuid","realm_access":{"roles":["mcp-server-b-user","offline_access"]}}' \
+  | base64 -w0 | tr '+/' '-_' | tr -d '=')
+BOB_TOKEN="eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.${PAYLOAD}."
+```
+
+### Call a tool with curl
+
+Start the server:
+
+```bash
+MCP_DISABLE_HOST_CHECK=true RUST_LOG=info cargo run --bin mcp_server
+```
+
+Initialize the MCP session, then call a tool:
+
+```bash
+# Initialize
+curl -s http://127.0.0.1:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer $ALICE_TOKEN" \
+  --data '{
+    "jsonrpc": "2.0", "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-03-26",
+      "capabilities": {},
+      "clientInfo": {"name": "curl-test", "version": "1.0"}
+    }
+  }'
+
+# Call calc_tax
+curl -s http://127.0.0.1:8001/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer $ALICE_TOKEN" \
+  --data '{
+    "jsonrpc": "2.0", "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "calc_tax",
+      "arguments": {
+        "annual_income": 40000
+      }
+    }
+  }' | python3 -m json.tool
+```
+
+### Expected response
+
+The tool result text contains `called_by` and `roles` alongside the normal output:
+
+```json
+{
+  "annual_income": 40000.0,
+  "tax_amount": 5850.0,
+  "effective_rate_pct": 14.625,
+  "surcharge_applied": false,
+  "bracket_details": [
+    {"bracket": "0 – 15,000", "rate_pct": 5.0, "taxable_in_bracket": 15000.0, "tax_in_bracket": 750.0},
+    {"bracket": "15,000 – 35,000", "rate_pct": 20.0, "taxable_in_bracket": 20000.0, "tax_in_bracket": 4000.0},
+    {"bracket": "35,000 – 60,000", "rate_pct": 22.0, "taxable_in_bracket": 5000.0, "tax_in_bracket": 1100.0}
+  ],
+  "called_by": "alice",
+  "roles": [
+    "mcp-server-a-user",
+    "uma_authorization",
+    "default-roles-openshell"
+  ]
+}
+```
+
+| Token | `called_by` | `roles` |
+|-------|-------------|---------|
+| Alice's JWT | `"alice"` | `["mcp-server-a-user", "uma_authorization", "default-roles-openshell"]` |
+| Bob's JWT | `"bob"` | `["mcp-server-b-user", "offline_access"]` |
+| No token | `"unknown"` | `[]` |
+
 ## 🛠️ Development
 
 ### Available Commands
