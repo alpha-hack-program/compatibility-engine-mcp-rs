@@ -55,8 +55,8 @@ tracing-opentelemetry = "0.32"
 [package.metadata.release]
 # Don't publish to crates.io (since this is a binary project)
 publish = false
-# Don't push git tags (you can enable this if you want)
-push = false
+# Push commits and tags to the remote
+push = true
 # Run pre-release hook
 pre-release-hook = ["scripts/sync-manifest-version.sh"]
 # Create git tag with 'v' prefix
