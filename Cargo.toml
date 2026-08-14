@@ -51,6 +51,8 @@ opentelemetry-otlp = { version = "0.31", features = [
     "http-proto",
 ] }
 tracing-opentelemetry = "0.32"
+base64 = "0.22"
+http = "1"
 
 [package.metadata.release]
 # Don't publish to crates.io (since this is a binary project)

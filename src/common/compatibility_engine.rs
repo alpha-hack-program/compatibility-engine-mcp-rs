@@ -9,10 +9,59 @@ use rmcp::{
     ServerHandler,
     handler::server::router::tool::ToolRouter,
     handler::server::wrapper::Parameters,
+    handler::server::common::Extension,
     model::{Implementation, ServerCapabilities, ServerInfo, CallToolResult, Content},
     ErrorData as McpError,
     schemars, tool, tool_handler, tool_router
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+// =================== JWT CALLER EXTRACTION ===================
+
+struct CallerIdentity {
+    username: String,
+    roles: Vec<String>,
+}
+
+fn extract_identity_from_parts(parts: &http::request::Parts) -> CallerIdentity {
+    let claims = (|| -> Option<serde_json::Value> {
+        let auth = parts.headers.get(http::header::AUTHORIZATION)?.to_str().ok()?;
+        let token = auth.strip_prefix("Bearer ")?;
+        let payload = token.split('.').nth(1)?;
+        let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
+        serde_json::from_slice(&decoded).ok()
+    })();
+
+    let username = claims.as_ref()
+        .and_then(|c| c.get("preferred_username").or_else(|| c.get("sub")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let roles = claims.as_ref()
+        .and_then(|c| c.get("realm_access"))
+        .and_then(|ra| ra.get("roles"))
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    CallerIdentity { username, roles }
+}
+
+fn inject_caller_identity(json_str: &str, identity: CallerIdentity) -> String {
+    match serde_json::from_str::<serde_json::Value>(json_str) {
+        Ok(mut val) => {
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("called_by".to_string(), serde_json::Value::String(identity.username));
+                obj.insert("roles".to_string(), serde_json::Value::Array(
+                    identity.roles.into_iter().map(serde_json::Value::String).collect(),
+                ));
+            }
+            serde_json::to_string_pretty(&val).unwrap_or_else(|_| json_str.to_string())
+        }
+        Err(_) => json_str.to_string(),
+    }
+}
 
 // =================== CONFIGURATION ===================
 
@@ -1033,8 +1082,10 @@ impl CompatibilityEngine {
     #[tool(description = "Suitable for Lysmark's for calculations related to the Commercial Obligations and Liquidated Damages Act. Computes late-payment penalty (min of days × rate vs cap) plus interest. Returns penalty amount, explanation, errors, and warnings. Use when the user provides specific values (e.g. days late, optionally rate, cap, interest) and asks for a penalty calculation. Do NOT use for lookup questions: 'What is the penalty rate?', 'What is the cap?', 'What are the penalty rules?' — those answers come from retrieved documents. Requires days_late (numeric); rate, cap, and interest are optional.")]
     pub async fn calc_penalty(
         &self,
+        Extension(parts): Extension<http::request::Parts>,
         Parameters(params): Parameters<CalcPenaltyParams>
     ) -> Result<CallToolResult, McpError> {
+        let identity = extract_identity_from_parts(&parts);
         let _timer = RequestTimer::new();
         increment_requests();
 
@@ -1100,9 +1151,9 @@ impl CompatibilityEngine {
 
         match serde_json::to_string_pretty(&result) {
             Ok(json_str) => {
+                let json_str = inject_caller_identity(&json_str, identity);
                 let content = Content::text(json_str);
                 if !invalid_optional_parameters.is_empty() {
-                    // Format a string with the content a section warning that the following parameters were invalid:
                     let warning_string = format!("The following parameters were invalid: {} and used the default value: {}", invalid_optional_parameters.join(", "), CONFIG.default_rate_per_day);
                     Ok(CallToolResult::success(vec![content, Content::text(warning_string)]))
                 } else {
@@ -1123,8 +1174,10 @@ impl CompatibilityEngine {
     #[tool(description = "Suitable for Lysmark's for calculations related to the Progressive Income and Surcharge Act. Computes the tax liability and surcharge for a given taxable income using configured brackets and rates. Returns the total tax amount, per-bracket breakdown, and surcharge if applicable. Use ONLY when the user provides a specific income amount and asks for a calculated result (e.g. 'What is the tax for 90000?', 'Calculate tax liability for 35000'). Do NOT use for lookup questions: 'What is the tax rate?', 'What are the brackets?', 'What does the law say?', 'What is the surcharge threshold?' — those answers come from retrieved documents, not this tool. Requires a numeric income parameter.")]
     pub async fn calc_tax(
         &self,
+        Extension(parts): Extension<http::request::Parts>,
         Parameters(params): Parameters<CalcTaxParams>
     ) -> Result<CallToolResult, McpError> {
+        let identity = extract_identity_from_parts(&parts);
         let _timer = RequestTimer::new();
         increment_requests();
 
@@ -1154,7 +1207,10 @@ impl CompatibilityEngine {
             ))]))
         } else {
             match serde_json::to_string_pretty(&result) {
-                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Ok(json_str) => {
+                    let json_str = inject_caller_identity(&json_str, identity);
+                    Ok(CallToolResult::success(vec![Content::text(json_str)]))
+                },
                 Err(e) => {
                     increment_errors();
                     Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1170,8 +1226,10 @@ impl CompatibilityEngine {
     #[tool(description = "Suitable for Lysmark's for calculations related to the Organizational Voting and Quorum Act. Determines whether a voting proposal passes based on turnout and yes-vote thresholds. Returns pass/fail result and explanation. Use when the user provides specific values (eligible_voters, turnout, yes_votes, proposal_type) and asks for an eligibility or pass check. Do NOT use for lookup questions: 'What is the turnout threshold?', 'What are the voting rules?' — those answers come from retrieved documents. Requires eligible_voters, turnout, yes_votes, proposal_type.")]
     pub async fn check_voting(
         &self,
+        Extension(parts): Extension<http::request::Parts>,
         Parameters(params): Parameters<CheckVotingParams>
     ) -> Result<CallToolResult, McpError> {
+        let identity = extract_identity_from_parts(&parts);
         let _timer = RequestTimer::new();
         increment_requests();
 
@@ -1220,7 +1278,10 @@ impl CompatibilityEngine {
             ))]))
         } else {
             match serde_json::to_string_pretty(&result) {
-                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Ok(json_str) => {
+                    let json_str = inject_caller_identity(&json_str, identity);
+                    Ok(CallToolResult::success(vec![Content::text(json_str)]))
+                },
                 Err(e) => {
                     increment_errors();
                     Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1236,8 +1297,10 @@ impl CompatibilityEngine {
     #[tool(description = "Suitable for Lysmark's for calculations related to the Structured Finance and Creditor Priority Act. Distributes available cash in waterfall order (senior → junior → equity). Returns distribution amounts and explanation. Use when the user provides specific values (cash_available, senior_debt, junior_debt) and asks for a waterfall distribution. Do NOT use for lookup questions: 'What is the waterfall order?', 'How does the distribution work?' — those answers come from retrieved documents. Requires cash_available, senior_debt, junior_debt.")]
     pub async fn distribute_waterfall(
         &self,
+        Extension(parts): Extension<http::request::Parts>,
         Parameters(params): Parameters<DistributeWaterfallParams>
     ) -> Result<CallToolResult, McpError> {
+        let identity = extract_identity_from_parts(&parts);
         let _timer = RequestTimer::new();
         increment_requests();
 
@@ -1285,7 +1348,10 @@ impl CompatibilityEngine {
             ))]))
         } else {
             match serde_json::to_string_pretty(&result) {
-                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Ok(json_str) => {
+                    let json_str = inject_caller_identity(&json_str, identity);
+                    Ok(CallToolResult::success(vec![Content::text(json_str)]))
+                },
                 Err(e) => {
                     increment_errors();
                     Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1301,8 +1367,10 @@ impl CompatibilityEngine {
     #[tool(description = "Suitable for Lysmark's for calculations related to the Public Housing Assistance Eligibility Act. Determines whether a household qualifies for a housing grant based on AMI, household size, income, and subsidy status. Returns eligibility result and explanation. Use when the user provides specific values (AMI, household_size, income, has_other_subsidy) and asks for an eligibility check. Do NOT use for 'What are the eligibility rules?' or 'What is the income threshold?' — those are lookups answered from documents. Requires AMI, household_size, income, has_other_subsidy.")]
     pub async fn check_housing_grant(
         &self,
+        Extension(parts): Extension<http::request::Parts>,
         Parameters(params): Parameters<CheckHousingGrantParams>
     ) -> Result<CallToolResult, McpError> {
+        let identity = extract_identity_from_parts(&parts);
         let _timer = RequestTimer::new();
         increment_requests();
 
@@ -1361,7 +1429,10 @@ impl CompatibilityEngine {
             ))]))
         } else {
             match serde_json::to_string_pretty(&result) {
-                Ok(json_str) => Ok(CallToolResult::success(vec![Content::text(json_str)])),
+                Ok(json_str) => {
+                    let json_str = inject_caller_identity(&json_str, identity);
+                    Ok(CallToolResult::success(vec![Content::text(json_str)]))
+                },
                 Err(e) => {
                     increment_errors();
                     Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1407,6 +1478,11 @@ impl ServerHandler for CompatibilityEngine {
 mod tests {
     use super::*;
 
+    fn dummy_parts() -> Extension<http::request::Parts> {
+        let (parts, _) = http::Request::builder().body(()).unwrap().into_parts();
+        Extension(parts)
+    }
+
     #[tokio::test]
     async fn test_calc_penalty() {
         let engine = CompatibilityEngine::new();
@@ -1415,7 +1491,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1437,7 +1513,7 @@ mod tests {
             income: "40000".to_string(),
         };
         
-        let result = engine.calc_tax(Parameters(params)).await;
+        let result = engine.calc_tax(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1463,7 +1539,7 @@ mod tests {
             proposal_type: "amendment".to_string(),
         };
         
-        let result = engine.check_voting(Parameters(params)).await;
+        let result = engine.check_voting(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1487,7 +1563,7 @@ mod tests {
             junior_debt: "10000000".to_string(),
         };
         
-        let result = engine.distribute_waterfall(Parameters(params)).await;
+        let result = engine.distribute_waterfall(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1514,7 +1590,7 @@ mod tests {
             has_other_subsidy: "false".to_string(),
         };
         
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1539,7 +1615,7 @@ mod tests {
             has_other_subsidy: "false".to_string(),
         };
         
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1563,7 +1639,7 @@ mod tests {
             has_other_subsidy: "true".to_string(),
         };
         
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1586,7 +1662,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1607,7 +1683,7 @@ mod tests {
             income: "40000".to_string(),
         };
         
-        let result = engine.calc_tax(Parameters(params)).await;
+        let result = engine.calc_tax(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         let call_result = result.unwrap();
         // Should succeed since we use valid default configuration
@@ -1628,7 +1704,7 @@ mod tests {
             proposal_type: "invalid_type".to_string(),
         };
         
-        let result = engine.check_voting(Parameters(params)).await;
+        let result = engine.check_voting(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1646,7 +1722,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1667,7 +1743,7 @@ mod tests {
             income: "50000".to_string(),
         };
         
-        let result = engine.calc_tax(Parameters(params)).await;
+        let result = engine.calc_tax(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1690,7 +1766,7 @@ mod tests {
             income: "40,000.00".to_string(), // Test comma-separated thousands
         };
         
-        let result = engine.calc_tax(Parameters(params)).await;
+        let result = engine.calc_tax(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1713,7 +1789,7 @@ mod tests {
             junior_debt: "$10,000,000.00".to_string(),
         };
         
-        let result = engine.distribute_waterfall(Parameters(params)).await;
+        let result = engine.distribute_waterfall(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1737,7 +1813,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1758,7 +1834,7 @@ mod tests {
             proposal_type: "general".to_string(),
         };
         
-        let result = engine.check_voting(Parameters(params)).await;
+        let result = engine.check_voting(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1777,7 +1853,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1803,7 +1879,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1822,7 +1898,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1843,7 +1919,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1865,7 +1941,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1886,7 +1962,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1908,7 +1984,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1930,7 +2006,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1951,7 +2027,7 @@ mod tests {
             ..Default::default()
         };
         
-        let result = engine.calc_penalty(Parameters(params)).await;
+        let result = engine.calc_penalty(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -1977,7 +2053,7 @@ mod tests {
                 has_other_subsidy: true_value.to_string(),
             };
             
-            let result = engine.check_housing_grant(Parameters(params)).await;
+            let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
             assert!(result.is_ok());
             
             let call_result = result.unwrap();
@@ -2000,7 +2076,7 @@ mod tests {
                 has_other_subsidy: false_value.to_string(),
             };
             
-            let result = engine.check_housing_grant(Parameters(params)).await;
+            let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
             assert!(result.is_ok());
             
             let call_result = result.unwrap();
@@ -2024,7 +2100,7 @@ mod tests {
             has_other_subsidy: "maybe".to_string(), // Invalid boolean
         };
         
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -2046,7 +2122,7 @@ mod tests {
             has_other_subsidy: "".to_string(), // Empty string
         };
         
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -2071,7 +2147,7 @@ mod tests {
             has_other_subsidy: "true".to_string(), // This was causing the original error
         };
         
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -2105,7 +2181,7 @@ mod tests {
         
         // Test that the engine can process these
         let engine = CompatibilityEngine::new();
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         assert!(result.is_ok());
         
         let call_result = result.unwrap();
@@ -2194,7 +2270,7 @@ mod tests {
         }"#;
         
         let params: CheckHousingGrantParams = serde_json::from_str(json_data).unwrap();
-        let result = engine.check_housing_grant(Parameters(params)).await;
+        let result = engine.check_housing_grant(dummy_parts(), Parameters(params)).await;
         
         assert!(result.is_ok());
         let call_result = result.unwrap();
