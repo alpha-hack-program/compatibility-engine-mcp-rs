@@ -4,13 +4,13 @@ version = "3.1.5"
 edition = "2024"
 
 [dependencies]
-rmcp = { version = "1.4.0", features = [
+rmcp = { version = "1.7.0", features = [
     "server",
     "transport-io",
     "transport-streamable-http-server",
     "auth",
 ] }
-tokio = { version = "1.46", features = [
+tokio = { version = "1.53.1", features = [
     "macros",
     "rt",
     "rt-multi-thread",
